@@ -479,3 +479,27 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 }
 
 .field input:disabled { opacity: .45; }
+
+/* 음봉 단타 카드 */
+.swing h2 { font-size: 16px; margin: 0 0 8px; }
+.sw-item { padding: 12px 0; border-top: 1px solid var(--line); }
+.sw-item:first-of-type { border-top: 0; }
+.sw-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
+.sw-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; align-items: end; }
+.sw-text { margin: 10px 0 6px; font-weight: 600; }
+.sw-text.none { font-weight: 400; color: var(--text-2); }
+.sw-text.buy { color: var(--accent); }
+.sw-text.tp { color: var(--up); }
+.sw-text.sl { color: var(--down); }
+.swing h2 .sw-edit { float: right; font-weight: 400; }
+.sw-rows { display: grid; gap: 8px; margin: 12px 0 8px; }
+.sw-row { display: grid; grid-template-columns: 1.2fr 1fr 110px auto; gap: 8px; align-items: center; }
+.sw-row input { min-width: 0; }
+.sw-pct { display: flex; align-items: center; gap: 4px; }
+.sw-pct input { width: 100%; }
+.sw-sum.bad { color: var(--danger); font-weight: 600; }
+@media (max-width: 560px) {
+  .sw-row { grid-template-columns: 1fr 1fr; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+  .sw-row .sw-pct { grid-column: 1; }
+  .sw-row [data-act=sw-row-del] { justify-self: end; }
+}

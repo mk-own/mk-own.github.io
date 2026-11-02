@@ -1,7 +1,8 @@
 import { legacyOpen } from './crypto.js';
 import { parseBookmarks, SEP } from './bookmarks.js';
-import { COLLECTIONS, SECTIONS, ASSET_KEYS, VIEWS, DAYS, num, whenText } from './schemas.js';
+import { COLLECTIONS, SECTIONS, ASSET_KEYS, VIEWS, DAYS, num, whenText, isUS } from './schemas.js';
 import * as store from './store.js';
+import { decide, applyFill } from './swing.js';
 
 const { S } = store;
 const LS = { prefs: 'hub.prefs', legacyCache: 'hub.cache', legacyPlain: 'hub.plain', legacyGh: 'hub.github' };
@@ -15,12 +16,14 @@ const ymd = (d = new Date()) => new Date(d - d.getTimezoneOffset() * 6e4).toISOS
 const daysUntil = s => Math.round((new Date(s) - new Date(ymd())) / 864e5);
 
 const items = k => S.data.items[k];
-const ui = { sort: {}, q: {}, folder: '', editLinks: false, fileMode: '', ttPerson: '', ttDay: '', libFolder: '' };
+const ui = { sort: {}, q: {}, folder: '', editLinks: false, fileMode: '', ttPerson: '', ttDay: '', libFolder: '', swing: {} };
 
 // ---------- 표시 형식 ----------
 
 const fmtNum = v => (v === '' || v == null || !Number.isFinite(+v) ? '' : (+v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }));
 const fmtWon = v => (v === '' || v == null ? '' : `${Math.round(num(v)).toLocaleString('ko-KR')}원`);
+const fmtUsd = v => (v === '' || v == null ? '' : `$${num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+const fmtMoney = (v, cur) => (cur === '$' ? fmtUsd(v) : fmtWon(v));
 
 function fmtKor(n) {
   const neg = n < 0;
@@ -44,9 +47,10 @@ function fmtSize(n) {
 const safeUrl = u => (/^(https?:|mailto:|tel:)/i.test(u || '') ? u : null);
 const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
-function cell(type, v) {
+function cell(type, v, cur) {
   switch (type) {
-    case 'money': return fmtWon(v);
+    case 'money': return fmtMoney(v, cur);
+    case 'won': return fmtWon(v);
     case 'number': return fmtNum(v);
     case 'pct':
       if (v === '' || v == null) return '';
@@ -64,7 +68,7 @@ function cell(type, v) {
   }
 }
 
-const isNumType = t => t === 'money' || t === 'number' || t === 'pct';
+const isNumType = t => t === 'money' || t === 'won' || t === 'number' || t === 'pct';
 
 const filesOf = (key, id) => items('files').filter(f => f.pk === key && f.pid === id);
 
@@ -400,6 +404,8 @@ function render() {
   else if (s.id === 'links') v.innerHTML = linksHtml();
   else if (s.id === 'library') v.innerHTML = libraryHtml();
   else v.innerHTML = sectionHtml(s, tab);
+  const sf = $('[data-sw-setup]');
+  if (sf) planSum(sf);
 }
 
 addEventListener('hashchange', () => {
@@ -547,6 +553,7 @@ function sectionHtml(s, tab) {
   return `
     <div class="sec-head"><h1>${s.title}</h1></div>
     ${tabsHtml(s, tab)}
+    ${tab === 'stocks' ? swingHtml() : ''}
     <div class="toolbar">
       <input type="search" class="search" data-q="${tab}" placeholder="${def.title} 검색" value="${esc(ui.q[tab] || '')}">
       <span class="sums">${sums.join('<span class="dot">·</span>')}</span>
@@ -592,9 +599,141 @@ function tableHtml(key) {
   const body = rows.map(r => `<tr data-act="edit" data-key="${key}" data-id="${r.id}" tabindex="0">${cols.map((c, i) => {
     const v = c.fn ? c.fn(r) : r[c.k];
     const clip = i === 0 && counts[r.id] ? ` <span class="clip" title="첨부 ${counts[r.id]}개">📎${counts[r.id]}</span>` : '';
-    return `<td class="${isNumType(c.type) ? 'num' : ''}">${cell(c.type, v)}${clip}</td>`;
+    return `<td class="${isNumType(c.type) ? 'num' : ''}">${cell(c.type, v, def.cur?.(r))}${clip}</td>`;
   }).join('')}</tr>`).join('');
   return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+// ----- 음봉 단타 (주식 탭 위 "오늘 할 일") -----
+
+const swingParams = r => ({ ...(ui.swing[r.id] || {}), account: r.account, units: r.units, qty: r.qty, avg: r.avg, us: isUS(r) });
+
+function swingResultHtml(r) {
+  const d = decide(swingParams(r));
+  const label = { tp: '익절 체결', sl: '손절 체결', buy: '매수 체결' };
+  return `<p class="sw-text ${d.action}">${esc(d.text)}</p>
+    ${d.orders.length ? `<div class="row">${d.orders.map((o, i) => `<button type="button" class="btn small" data-act="sw-fill" data-id="${r.id}" data-i="${i}">${label[o.kind]}했어요</button>`).join('')}</div>` : ''}`;
+}
+
+// 단타 종목과 비중 기본값. 사용자가 고친 값은 sys.swingPlan에 저장한다
+const SWING_PLAN = [
+  { name: 'SK하이닉스', code: '000660', pct: 50 },
+  { name: 'QQQ', code: 'QQQ', pct: 30 },
+  { name: 'SOXL', code: 'SOXL', pct: 20 },
+];
+const swingPlan = () => S.data.sys.swingPlan || { total: 20000000, fx: '', rows: SWING_PLAN };
+
+const planRowHtml = (x = {}) => `<div class="sw-row">
+  <input name="pname" placeholder="종목명" value="${esc(x.name ?? '')}" aria-label="종목명">
+  <input name="pcode" placeholder="코드 (000660, QQQ)" value="${esc(x.code ?? '')}" aria-label="종목코드">
+  <span class="sw-pct"><input name="ppct" type="number" step="any" inputmode="decimal" value="${esc(x.pct ?? '')}" aria-label="비율"> %</span>
+  <button type="button" class="btn small" data-act="sw-row-del" aria-label="이 종목 빼기">✕</button>
+</div>`;
+
+function planSum(form) {
+  const sum = [...form.querySelectorAll('[name=ppct]')].reduce((a, i) => a + num(i.value), 0);
+  const el = form.querySelector('.sw-sum');
+  el.textContent = `비율 합계 ${Math.round(sum * 100) / 100}%`;
+  el.classList.toggle('bad', Math.abs(sum - 100) > 0.001);
+}
+
+function swingSetupHtml(editing) {
+  const plan = swingPlan();
+  return `<section class="card swing">
+    <h2>${editing ? '종목·비율 바꾸기' : '음봉 단타 시작하기'}</h2>
+    <p class="muted small">전체 금액을 비율대로 나눠 종목별 계좌 금액을 넣어요. 이미 있는 종목은 계좌 금액만 바꾸고, 목록에서 뺀 종목은 단타에서 빠져요. 코드가 영문이면 해외(달러) 종목이에요.</p>
+    <form data-sw-setup>
+      <div class="sw-inputs">
+        <label class="field"><span>전체 금액 (원)</span><input name="total" type="number" step="any" inputmode="numeric" value="${esc(plan.total)}" required></label>
+        <label class="field"><span>환율 (원/$, 해외 종목만)</span><input name="fx" type="number" step="any" inputmode="decimal" placeholder="예: 1400" value="${esc(plan.fx)}"></label>
+      </div>
+      <div class="sw-rows">${plan.rows.map(planRowHtml).join('')}</div>
+      <div class="row">
+        <button type="button" class="btn small" data-act="sw-row-add">+ 종목 추가</button>
+        <span class="sw-sum muted small"></span>
+        <span class="spacer"></span>
+        ${editing ? '<button type="button" class="btn" data-act="sw-edit">취소</button>' : ''}
+        <button class="btn primary" type="submit">${editing ? '적용' : '종목 넣기'}</button>
+      </div>
+    </form>
+  </section>`;
+}
+
+async function swingSetup(f) {
+  const total = num(f.total.value), fx = num(f.fx.value);
+  const rows = [...f.querySelectorAll('.sw-row')].map(el => ({
+    name: el.querySelector('[name=pname]').value.trim(),
+    code: el.querySelector('[name=pcode]').value.trim().toUpperCase(),
+    pct: num(el.querySelector('[name=ppct]').value),
+  })).filter(x => x.name || x.code);
+  if (!total) return toast('전체 금액을 넣어주세요.', true);
+  if (!rows.length) return toast('종목을 하나 이상 넣어주세요.', true);
+  if (rows.some(x => !x.name || !x.code || !(x.pct > 0))) return toast('종목마다 이름·코드·비율을 넣어주세요.', true);
+  const sum = rows.reduce((a, x) => a + x.pct, 0);
+  if (Math.abs(sum - 100) > 0.001) return toast(`비율 합계가 ${sum}%예요. 100%로 맞춰주세요.`, true);
+  if (rows.some(x => isUS(x)) && !fx) return toast('해외 종목이 있으면 환율을 넣어주세요.', true);
+
+  const find = x => items('stocks').find(s => (s.code && s.code.toUpperCase() === x.code) || s.name === x.name);
+  const kept = new Set(rows.map(find).filter(Boolean));
+  const dropped = items('stocks').filter(r => num(r.account) > 0 && !kept.has(r));
+  const held = [...kept, ...dropped].filter(r => num(r.qty) > 0 && num(r.account) > 0).map(r => r.name);
+  if (held.length && !confirm(`보유 중인 종목(${held.join(', ')})이 있어요. 계좌 금액이 바뀌면 1칸 크기도 바로 바뀌고, 뺀 종목은 단타 안내가 멈춰요. 계속할까요?`)) return;
+
+  const changed = rows.map(x => {
+    const won = total * x.pct / 100, us = isUS(x);
+    let r = find(x);
+    if (!r) { r = { id: uid(), name: x.name, code: x.code, market: us ? '해외' : '국내', qty: 0, avg: 0, units: 0 }; items('stocks').push(r); }
+    const account = us ? Math.round(won / fx * 100) / 100 : Math.round(won);
+    Object.assign(r, { code: r.code || x.code, account }, us ? { fx } : {});
+    // 이미 갖고 있는 주식은 이번 묶음으로 본다: 들어간 돈 ÷ 1칸 금액 (1~5칸). 칸이 다 차면 더 사지 않고 익절·손절만 기다림
+    if (num(r.qty) > 0 && num(r.avg) > 0 && !num(r.units)) r.units = Math.min(5, Math.max(1, Math.round(num(r.qty) * num(r.avg) / (account / 5))));
+    return r;
+  });
+  for (const r of dropped) r.account = '';
+  S.data.sys.swingPlan = { total, fx: fx || '', rows };
+  await store.changed('stocks', [...changed, ...dropped]);
+  await store.changedSys();
+  ui.swingEdit = false;
+  render();
+  toast('음봉 단타 종목을 넣었어요. 이미 갖고 있는 주식은 수량·평단을 넣어 두면 보유 칸을 자동으로 정해요.');
+}
+
+function swingHtml() {
+  const list = items('stocks').filter(r => num(r.account) > 0);
+  if (!list.length || ui.swingEdit) return swingSetupHtml(list.length > 0);
+  return `<section class="card swing">
+    <h2>오늘 할 일 <small class="muted">음봉 단타</small>
+      <button type="button" class="btn small sw-edit" data-act="sw-edit">종목·비율 바꾸기</button></h2>
+    ${list.map(r => {
+      const us = isUS(r), v = ui.swing[r.id] || {}, cur = us ? '$' : '';
+      const units = Math.round(num(r.units));
+      return `<div class="sw-item" data-sw="${r.id}">
+        <div class="sw-head"><b>${esc(r.name)}</b>
+          <span class="muted small">${units}/5칸 · 1칸 ${fmtMoney(num(r.account) / 5, cur)}${num(r.qty) ? ` · ${fmtNum(r.qty)}주 평단 ${fmtMoney(r.avg, cur)}` : ''}</span></div>
+        <div class="sw-inputs">
+          <label class="field"><span>${us ? '어젯밤 시가' : '오늘 시가'}</span><input type="number" step="any" inputmode="decimal" data-sw-k="open" value="${esc(v.open ?? '')}"></label>
+          <label class="field"><span>${us ? '어젯밤 종가' : '예상체결가 (15:20)'}</span><input type="number" step="any" inputmode="decimal" data-sw-k="close" value="${esc(v.close ?? '')}"></label>
+          <label class="check"><input type="checkbox" data-sw-k="maUp"${v.maUp ? ' checked' : ''}> 200일선 오르는 중</label>
+        </div>
+        <div class="sw-result">${swingResultHtml(r)}</div>
+      </div>`;
+    }).join('')}
+  </section>`;
+}
+
+async function swingFill(id, i) {
+  const r = items('stocks').find(x => x.id === id);
+  const p = swingParams(r), o = decide(p).orders[i];
+  if (!o) return;
+  const what = o.kind === 'buy' ? `${o.qty}주 매수` : `${o.qty}주 전량 매도`;
+  const guess = o.kind === 'tp' && o.price ? o.price : p.close;
+  const px = prompt(`${r.name} ${what} — 실제 체결가를 넣으세요`, guess ?? '');
+  if (px == null || !num(px)) return;
+  Object.assign(r, applyFill(p, o, num(px)), { price: num(px), asOf: ymd() });
+  delete ui.swing[id];
+  await store.changed('stocks', [r]);
+  render();
+  toast(o.kind === 'buy' ? `${r.name} 매수를 기록했어요.` : `${r.name} 매도를 기록했어요. 계좌 금액이 ${fmtMoney(r.account, isUS(r) ? '$' : '')}로 바뀌었어요.`);
 }
 
 // ----- 시간표 -----
@@ -903,12 +1042,39 @@ view.addEventListener('click', e => {
     case 'file': openViewer(items('files').find(f => f.id === id)); break;
     case 'lib-upload': pickFile(el.dataset.dir ? 'lib-dir' : 'lib'); break;
     case 'settings': openSettings(); break;
+    case 'sw-edit': ui.swingEdit = !ui.swingEdit; render(); break;
+    case 'sw-row-add': {
+      const box = el.closest('form').querySelector('.sw-rows');
+      box.insertAdjacentHTML('beforeend', planRowHtml());
+      box.lastElementChild.querySelector('input').focus();
+      planSum(el.closest('form'));
+      break;
+    }
+    case 'sw-row-del': { const f = el.closest('form'); el.closest('.sw-row').remove(); planSum(f); break; }
+    case 'sw-fill': swingFill(id, Number(el.dataset.i)).catch(err => toast(err.message, true)); break;
   }
 });
 
 view.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.matches('tr[data-act], li[data-act]')) e.target.click();
 });
+
+// 단타 카드 입력은 저장하지 않고, 그 종목의 결과 줄만 다시 그린다
+function swingInput(e) {
+  if (e.target.name === 'ppct') return planSum(e.target.form);
+  const k = e.target.dataset.swK, box = e.target.closest('[data-sw]');
+  if (!k || !box) return;
+  const id = box.dataset.sw;
+  ui.swing[id] = { ...(ui.swing[id] || {}), [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value };
+  box.querySelector('.sw-result').innerHTML = swingResultHtml(items('stocks').find(r => r.id === id));
+}
+view.addEventListener('input', swingInput);
+view.addEventListener('submit', e => {
+  if (!e.target.matches('[data-sw-setup]')) return;
+  e.preventDefault();
+  swingSetup(e.target).catch(err => toast(err.message, true));
+});
+view.addEventListener('change', e => { if (e.target.type === 'checkbox') swingInput(e); });
 
 view.addEventListener('input', e => {
   const k = e.target.dataset.q;
@@ -1044,7 +1210,7 @@ function fieldHtml(f, v) {
       input = `<input type="number" step="any" inputmode="decimal" ${base} value="${esc(v)}">`;
       break;
     case 'money':
-      input = `<input type="number" step="1" inputmode="numeric" ${base} value="${esc(v)}">`;
+      input = `<input type="number" step="any" inputmode="decimal" ${base} value="${esc(v)}">`;
       break;
     case 'url':
       input = `<input type="text" inputmode="url" placeholder="https://" ${base} value="${esc(v)}">`;

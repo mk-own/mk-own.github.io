@@ -2,13 +2,20 @@
 // field: { k, l(라벨), type?: text|textarea|select|date|number|money|url|check|folder, opts?, req?, due? }
 //   due: 날짜 필드를 홈의 "다가오는 일정"에 표시할 때 붙는 이름
 // cols: 표에 보일 컬럼. 문자열은 field 키, 객체는 계산 컬럼 { k, l, type, fn }
+// cur: 행마다 금액 단위 ('$'면 달러, 없으면 원)
 // value: 자산 합계에 더할 금액, debt: 부채 합계에 더할 금액, monthly: 월 지출
+
+import { levels } from './swing.js';
 
 export const num = v => {
   if (v === '' || v == null) return 0;
   const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
   return Number.isFinite(n) ? n : 0;
 };
+
+// 해외 종목: 구분이 해외이거나 종목코드가 영문 티커 (QQQ, SOXL …)
+export const isUS = r => r.market === '해외' || /^[A-Za-z][A-Za-z.]*$/.test(r.code || '');
+const fxOf = r => (isUS(r) ? num(r.fx) || 1 : 1);
 
 const memo = { k: 'memo', l: '메모', type: 'textarea' };
 const person = { k: 'person', l: '대상' };
@@ -55,14 +62,21 @@ export const COLLECTIONS = {
       { k: 'avg', l: '평균단가', type: 'money' },
       { k: 'price', l: '현재가', type: 'money' },
       { k: 'asOf', l: '현재가 기준일', type: 'date' },
+      { k: 'fx', l: '환율 (해외만, 원/$)', type: 'number' },
+      { k: 'account', l: '단타 계좌 금액 (해외는 $) · 넣으면 음봉 단타 적용', type: 'money' },
+      { k: 'units', l: '단타 보유 칸 (0~5)', type: 'number' },
       memo,
     ],
     cols: [
       'broker', 'name', 'qty', 'avg', 'price',
-      { k: '_val', l: '평가금액', type: 'money', fn: r => num(r.qty) * num(r.price) },
+      { k: '_val', l: '평가금액', type: 'won', fn: r => num(r.qty) * num(r.price) * fxOf(r) },
       { k: '_pl', l: '수익률', type: 'pct', fn: r => (num(r.avg) && num(r.price) ? (num(r.price) / num(r.avg) - 1) * 100 : '') },
+      { k: '_tp', l: '익절가', type: 'money', fn: r => (num(r.account) ? levels(r.avg, isUS(r)).tp ?? '' : '') },
+      { k: '_sl', l: '손절가', type: 'money', fn: r => (num(r.account) ? levels(r.avg, isUS(r)).sl ?? '' : '') },
     ],
-    value: r => num(r.qty) * num(r.price),
+    // 해외 종목은 금액을 달러로 적고, 평가금액만 환율로 원화 환산
+    cur: r => (isUS(r) ? '$' : ''),
+    value: r => num(r.qty) * num(r.price) * fxOf(r),
     label: r => r.name,
   },
   pension: {
@@ -234,7 +248,7 @@ export const VIEWS = { timetable: '시간표' };
 
 export const SECTIONS = [
   { id: 'home', title: '홈' },
-  { id: 'assets', title: '자산관리', tabs: ['insurance', 'stocks', 'pension', 'savings', 'realestate', 'loans'] },
+  { id: 'assets', title: '자산관리', tabs: ['stocks', 'pension', 'savings', 'insurance', 'realestate', 'loans'] },
   { id: 'education', title: '교육', tabs: ['education', 'timetable'] },
   { id: 'health', title: '건강', tabs: ['records', 'checkups', 'meds', 'hospitals'] },
   { id: 'library', title: '자료실' },
