@@ -214,10 +214,15 @@ function unlockScreen(msg = '') {
     <form id="f-unlock" class="lock-form">
       ${userField()}
       <input name="pw" type="password" placeholder="비밀번호" autocomplete="current-password" required>
+      <label class="field"><span>다음부터 이 기기에서는</span>
+        <select name="next">
+          <option value="password">매번 비밀번호</option>
+          <option value="pattern">패턴으로 열기 (열고 나서 그려요)</option>
+          <option value="auto">묻지 않고 열기</option>
+        </select></label>
       <button class="btn primary" type="submit">열기</button>
       <p class="err" role="alert">${esc(msg)}</p>
     </form>
-    <p class="muted small">매번 넣기 번거로우면 열고 나서 설정 → <b>이 기기에서 열기</b>에서 패턴이나 묻지 않음을 고르세요.</p>
     <div class="lock-links">
       <button class="btn ghost small" type="button" data-l="recover">비밀번호를 잊었어요</button>
       <button class="btn ghost small" type="button" data-l="reconnect">다시 연결</button>
@@ -227,7 +232,17 @@ function unlockScreen(msg = '') {
     const f = e.target;
     await busy(f, '여는 중…', async () => {
       await store.unlock(f.pw.value);
+      const next = f.next.value;
+      if (next === 'auto') await store.rememberDevice('auto');
       enterApp();
+      if (next === 'auto') toast('다음부터 이 기기에서는 비밀번호 없이 열려요. 자리를 비울 땐 🔒을 누르세요.');
+      if (next === 'pattern') {
+        openSettings();
+        const r = mform.querySelector('[name=openMode][value=pattern]');
+        r.checked = true;
+        r.dispatchEvent(new Event('change'));
+        $('#pat-set').scrollIntoView({ block: 'center' });
+      }
     });
   };
 }
@@ -381,8 +396,11 @@ lockCard.addEventListener('click', e => {
   const l = e.target.closest('[data-l]')?.dataset.l;
   if (l === 'recover') recoverScreen();
   else if (l === 'back') unlockScreen();
-  else if (l === 'reconnect' && confirm('이 기기의 연결 정보를 지우고 토큰으로 다시 연결할까요?\n(GitHub에 있는 데이터는 그대로예요)')) {
-    store.forgetDevice().then(() => connectScreen());
+  else if (l === 'reconnect' && confirm('이 기기의 연결만 끊고 토큰으로 다시 연결할까요?\nGitHub에 있는 데이터는 그대로이고, 다시 연결하면 모두 돌아와요.')) {
+    store.forgetDevice().then(() => connectScreen(), err => {
+      const el = lockCard.querySelector('.err');
+      if (el) el.textContent = err.message;
+    });
   }
 });
 
@@ -1544,11 +1562,12 @@ function openSettings() {
     <div class="row"><button type="button" class="btn" data-m="pw">비밀번호 변경</button></div>
 
     <h3>복구 코드</h3>
-    <p class="muted small">새로 만들면 예전 복구 코드는 더 이상 쓸 수 없어요.</p>
+    <p class="muted small">복구 코드는 <b>비밀번호를 잊었을 때</b> 새 비밀번호를 정하는 비상 열쇠예요. 새로 만들어도 <b>비밀번호는 그대로</b> 쓸 수 있고, 예전 복구 코드만 못 쓰게 돼요. 복구 코드를 잃어버렸을 때만 새로 만들고, 새 코드를 꼭 저장하세요.</p>
     <div class="row"><button type="button" class="btn" data-m="rc">새 복구 코드 만들기</button></div>
     <div id="rc-box"></div>
 
     <h3>토큰 바꾸기</h3>
+    <p class="muted small">GitHub에서 토큰을 새로 만들어 넣어도 <b>데이터·비밀번호·복구 코드는 그대로</b>예요. 바꾼 뒤 GitHub 토큰 목록에서 예전 토큰을 지우고, 휴대폰은 QR로 다시 연결하세요. (패턴이나 묻지 않음으로 열었다면 🔒 잠근 뒤 비밀번호로 열고 바꾸세요)</p>
     <div class="fields">
       <label class="field"><span>새 토큰</span><input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
       ${expField('tokenExp', '만료일')}
@@ -1567,7 +1586,8 @@ function openSettings() {
     <div class="row"><button type="button" class="btn" data-m="restore">백업 파일로 복원</button></div>
 
     <h3>이 기기</h3>
-    <div class="row"><button type="button" class="btn danger" data-m="forget">이 기기 연결 해제</button></div>
+    <p class="muted small">이 기기에서만 연결을 끊어요. GitHub에 있는 데이터는 지워지지 않아요. 못 올린 변경이 있으면 끊지 않아요.</p>
+    <div class="row"><button type="button" class="btn" data-m="forget">이 기기 연결 해제</button></div>
 
     <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
 
@@ -1646,7 +1666,7 @@ function openSettings() {
         toast('비밀번호를 바꿨어요. 다른 기기에서는 다음에 열 때 새 비밀번호를 넣으세요.');
       }); break;
       case 'rc': guard(async () => {
-        if (!confirm('새 복구 코드를 만들까요? 예전 코드는 쓸 수 없게 돼요.')) return;
+        if (!confirm('새 복구 코드를 만들까요?\n비밀번호는 그대로 쓸 수 있어요. 예전 복구 코드만 못 쓰게 되니, 다음 화면의 새 코드를 꼭 저장하세요.')) return;
         const code = await store.newRecovery();
         const box = $('#rc-box');
         box.innerHTML = `${codeHtml(code)}<p class="muted small">지금 저장하세요. 이 창을 닫으면 다시 볼 수 없어요.</p>`;
@@ -1674,13 +1694,11 @@ function openSettings() {
         el.restorePw.value = '';
         pickFile('restore');
         break;
-      case 'forget': {
-        const warn = S.dirty.size ? '\n\n주의: 아직 GitHub에 못 올린 변경이 있어요. 해제하면 사라져요.' : '';
-        if (!confirm(`이 기기의 연결 정보와 데이터 사본을 지울까요?\nGitHub에 있는 데이터는 그대로예요.${warn}`)) return;
+      case 'forget': guard(async () => {
+        if (!confirm('이 기기의 연결만 끊을까요?\nGitHub에 있는 데이터는 그대로이고, 토큰이나 QR로 다시 연결하면 모두 돌아와요.\n(아직 못 올린 변경이 있으면 끊지 않아요)')) return;
         await store.forgetDevice();
         location.reload();
-        break;
-      }
+      }); break;
     }
   };
   if (!modal.open) modal.showModal();

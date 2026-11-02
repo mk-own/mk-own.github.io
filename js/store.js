@@ -348,7 +348,12 @@ export async function resume(pattern) {
   return true;
 }
 
+// 이 기기의 연결 정보와 사본만 지운다 (GitHub 데이터는 그대로).
+// 아직 못 올린 변경이 있으면 먼저 올리고, 그래도 남으면 지우지 않는다
 export async function forgetDevice() {
+  if (S.gh && S.dirty.size) await upload();
+  const left = S.gh ? S.dirty.size : ((await idbGet('dirty')) || []).length;
+  if (left) throw new Error('아직 GitHub에 못 올린 변경이 있어서 해제하지 않았어요. 인터넷이 연결된 상태로 열어서 "✓ 저장됨"이 된 뒤 다시 하세요.');
   await idbClear();
 }
 
