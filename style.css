@@ -511,4 +511,29 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .pat-dot.on { fill: var(--accent); stroke: var(--accent); }
 .pat-line { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
 .open-modes { display: grid; gap: 8px; margin-bottom: 8px; }
-.open-modes input[type=radio] { width: 18px; height: 18px; accent-color: var(--accent); }
+.open-modes .check { align-items: flex-start; }
+.open-modes input[type=radio] { flex: none; width: 18px; height: 18px; min-height: 18px; padding: 0; margin: 2px 0 0; accent-color: var(--accent); }
+.open-modes input[type=radio]:focus:not(:focus-visible) { outline: none; }
+
+/* 설정 */
+.set-now { font-size: 13px; color: var(--text-2); background: var(--surface-2); border-radius: 10px; padding: 10px 12px; margin: 0 0 8px; }
+.set-group { font-size: 13px; color: var(--text-2); margin: 20px 0 8px; letter-spacing: .02em; }
+.set-group small { font-weight: 400; margin-left: 6px; }
+.set-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+.set-card h4 { margin: 0 0 4px; font-size: 15px; }
+.set-item { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; }
+.set-item > summary { list-style: none; cursor: pointer; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.set-item > summary::-webkit-details-marker { display: none; }
+.set-item > summary::after { content: '▸'; margin-left: auto; color: var(--text-2); }
+.set-item[open] > summary::after { content: '▾'; }
+.set-item > summary span { font-size: 13px; color: var(--text-2); }
+.set-item[open] > summary { border-bottom: 1px solid var(--line); }
+.set-item > :not(summary) { margin-left: 16px; margin-right: 16px; }
+.set-item > :last-child { margin-bottom: 14px; }
+.set-item .sep { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.note .steps { margin: 6px 0 6px; padding-left: 20px; display: grid; gap: 2px; }
+.open-modes .check > span small { display: block; margin-top: 1px; }
+
+/* 휴대폰에서 아래로 끌어 새로고침하지 않게 (자동 저장이라 필요 없음) */
+html, body { overscroll-behavior-y: contain; }
+.set-card .steps { margin: 6px 0 10px; padding-left: 18px; display: grid; gap: 4px; }

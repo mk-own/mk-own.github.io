@@ -96,14 +96,17 @@ const inAYear = () => ymd(new Date(Date.now() + 365 * 864e5));
 const expField = (name, label, cur = 'none') => {
   const none = !cur || cur === 'none';
   return `
-  <label class="field"><span>${label} <small class="muted">(만료 전에 알려드려요)</small></span>
-    <input name="${name}" type="date" value="${none ? inAYear() : esc(cur)}"${none ? ' disabled' : ''}></label>
-  <label class="check"><input type="checkbox" data-no-exp="${name}"${none ? ' checked' : ''}> 만료 없음 (No expiration)</label>`;
+  <label class="check"><input type="checkbox" data-no-exp="${name}"${none ? ' checked' : ''}> ${label}: 만료 없음 (No expiration)</label>
+  <label class="field"${none ? ' hidden' : ''}><span>${label} <small class="muted">(GitHub에서 정한 날짜. 만료 전에 알려드려요)</small></span>
+    <input name="${name}" type="date" value="${none ? inAYear() : esc(cur)}"${none ? ' disabled' : ''}></label>`;
 };
 const expValue = input => input.disabled ? 'none' : input.value;
 document.addEventListener('change', e => {
   const n = e.target.dataset?.noExp;
-  if (n) e.target.form.elements[n].disabled = e.target.checked;
+  if (!n) return;
+  const inp = e.target.form.elements[n];
+  inp.disabled = e.target.checked;
+  inp.closest('.field').hidden = e.target.checked;
 });
 // Chrome 비밀번호 저장용 (화면에는 안 보임)
 const userField = () => '<input class="sr-only" type="text" name="username" autocomplete="username" value="My Hub" tabindex="-1" aria-hidden="true">';
@@ -124,10 +127,18 @@ const TOKEN_HELP = `
 function connectScreen(err = '') {
   showLock(`
     <h1>이 기기 연결</h1>
-    <p class="muted">데이터는 GitHub 비공개 저장소에 암호화되어 저장돼요.</p>
-    <div class="note"><b>휴대폰이라면</b> PC에서 설정 → <b>다른 기기 연결</b>의 QR 코드를 카메라로 찍으세요.</div>
+    <p class="muted">데이터는 GitHub 비공개 저장소에 암호화되어 있어요. 연결만 하면 그대로 다시 보여요.</p>
+    <p class="muted small">토큰을 잃어버렸어도 괜찮아요. 아래 <b>토큰 만드는 방법</b>대로 새로 만들어 넣으면 돼요. 데이터와 비밀번호는 그대로예요.</p>
+    <div class="note"><b>휴대폰이라면 토큰 없이 연결해요</b>
+      <ol class="steps">
+        <li>PC에서 이 사이트를 열고 ⚙ 설정 → <b>휴대폰에서도 쓰기</b> → <b>QR 코드 보기</b></li>
+        <li>휴대폰 <b>카메라</b>로 QR을 찍고 뜨는 링크를 누르기</li>
+        <li>PC와 같은 비밀번호 넣기</li>
+      </ol>
+      <span class="muted small">QR이 안 되면 PC에서 <b>연결 링크 복사</b>를 눌러 나에게 보낸 뒤, 그 링크를 아래 칸에 붙여 넣으세요. 아이폰에서 홈 화면 아이콘으로 열면 따로 한 번 더 연결해야 해요.</span>
+    </div>
     <form id="f-connect" class="lock-form" autocomplete="off">
-      <label class="field"><span>GitHub 토큰</span><input name="token" type="password" placeholder="github_pat_…" required></label>
+      <label class="field"><span>GitHub 토큰 <small class="muted">(또는 연결 링크)</small></span><input name="token" type="password" placeholder="github_pat_… 또는 https://mk-own.github.io/#connect=…" required></label>
       ${expField('exp', '토큰 만료일')}
       <button class="btn primary" type="submit">연결</button>
       <p class="err" role="alert">${esc(err)}</p>
@@ -137,6 +148,15 @@ function connectScreen(err = '') {
     e.preventDefault();
     const f = e.target;
     await busy(f, '연결 중…', async () => {
+      // 연결 링크를 붙여 넣은 경우: 토큰 없이 연결하고 비밀번호 화면으로
+      const linked = store.deviceFromLink(f.token.value.trim());
+      if (linked) {
+        await store.saveDevice(linked);
+        await store.loadDevice();
+        toast('이 기기를 연결했어요. 비밀번호를 넣으세요.');
+        return unlockScreen();
+      }
+      if (f.token.value.includes('connect=')) throw new Error('연결 링크가 잘렸어요. PC에서 다시 복사해 주세요.');
       const { hasVault } = await store.connectWithToken(f.token.value.trim());
       ui.tokenExp = expValue(f.exp);
       hasVault ? existingScreen() : setupScreen();
@@ -207,6 +227,27 @@ function existingScreen() {
   };
 }
 
+// 비밀번호로 연 뒤 "다음부터 이 기기에서는" 고른 대로
+const nextSelect = () => `<label class="field"><span>다음부터 이 기기에서는</span>
+  <select name="next">
+    <option value="password">매번 비밀번호</option>
+    <option value="pattern">패턴으로 열기 (열고 나서 그려요)</option>
+    <option value="auto">묻지 않고 열기</option>
+  </select></label>`;
+
+async function afterUnlock(next) {
+  if (next === 'auto') await store.rememberDevice('auto');
+  enterApp();
+  if (next === 'auto') toast('다음부터 이 기기에서는 비밀번호 없이 열려요. 자리를 비울 땐 🔒을 누르세요.');
+  if (next === 'pattern') {
+    openSettings();
+    const r = mform.querySelector('[name=openMode][value=pattern]');
+    r.checked = true;
+    r.dispatchEvent(new Event('change'));
+    $('#pat-set').scrollIntoView({ block: 'center' });
+  }
+}
+
 function unlockScreen(msg = '') {
   showLock(`
     <h1>My Hub</h1>
@@ -214,12 +255,7 @@ function unlockScreen(msg = '') {
     <form id="f-unlock" class="lock-form">
       ${userField()}
       <input name="pw" type="password" placeholder="비밀번호" autocomplete="current-password" required>
-      <label class="field"><span>다음부터 이 기기에서는</span>
-        <select name="next">
-          <option value="password">매번 비밀번호</option>
-          <option value="pattern">패턴으로 열기 (열고 나서 그려요)</option>
-          <option value="auto">묻지 않고 열기</option>
-        </select></label>
+      ${nextSelect()}
       <button class="btn primary" type="submit">열기</button>
       <p class="err" role="alert">${esc(msg)}</p>
     </form>
@@ -232,17 +268,7 @@ function unlockScreen(msg = '') {
     const f = e.target;
     await busy(f, '여는 중…', async () => {
       await store.unlock(f.pw.value);
-      const next = f.next.value;
-      if (next === 'auto') await store.rememberDevice('auto');
-      enterApp();
-      if (next === 'auto') toast('다음부터 이 기기에서는 비밀번호 없이 열려요. 자리를 비울 땐 🔒을 누르세요.');
-      if (next === 'pattern') {
-        openSettings();
-        const r = mform.querySelector('[name=openMode][value=pattern]');
-        r.checked = true;
-        r.dispatchEvent(new Event('change'));
-        $('#pat-set').scrollIntoView({ block: 'center' });
-      }
+      await afterUnlock(f.next.value);
     });
   };
 }
@@ -446,6 +472,16 @@ function enterApp() {
   render();
   renderSync();
   store.sessionInfo().then(si => { ui.session = si; armIdle(); });
+  rememberThisTab();
+}
+
+// 새로고침해도 열린 채로: 이 탭에 번호를 붙여 두고 (탭을 닫으면 사라짐) 열기 정보를 저장
+function rememberThisTab() {
+  let id = null;
+  try { id = sessionStorage.getItem('hub.tab'); } catch {}
+  if (!id) id = uid() + uid();
+  try { sessionStorage.setItem('hub.tab', id); } catch { return; }
+  store.rememberTab(id).catch(() => {});
 }
 
 S.onStatus = () => renderSync();
@@ -478,6 +514,7 @@ function armIdle() {
 }
 
 async function lockNow() {
+  await store.forgetTab();
   if (S.dirty.size) await Promise.race([store.upload(), new Promise(r => setTimeout(r, 5000))]);
   location.reload();
 }
@@ -1512,82 +1549,108 @@ function openSettings() {
   const prefs = lsGet(LS.prefs) || {};
   const repos = store.usage();
   const exp = d.tokenExp === 'none' ? '없음' : d.tokenExp ? `${d.tokenExp} (${daysUntil(d.tokenExp) >= 0 ? `${daysUntil(d.tokenExp)}일 남음` : '만료됨'})` : '모름';
+  const modeName = { pattern: '패턴으로 열기', auto: '묻지 않고 열기' }[ui.session?.mode] || '매번 비밀번호로 열기';
   mform.innerHTML = `
     <h2>설정</h2>
+    <p class="set-now">이 기기: <b>${modeName}</b> · 토큰 만료 <b>${esc(exp)}</b> · 데이터는 GitHub 비공개 저장소에 안전하게 있어요</p>
 
-    <h3>연결</h3>
-    <dl class="kv">
-      <dt>계정</dt><dd>${esc(d.owner)}</dd>
-      <dt>데이터 저장소</dt><dd><a href="https://github.com/${esc(d.owner)}/${esc(d.repo)}" target="_blank" rel="noopener">${esc(d.repo)}</a> (비공개)</dd>
-      <dt>파일 저장소</dt><dd>${repos.length ? repos.map(r => `${esc(r.name)} ${fmtSize(r.bytes)}`).join(', ') : '아직 없음 (첫 파일을 올리면 만들어져요)'}</dd>
-      <dt>토큰 만료일</dt><dd>${esc(exp)}</dd>
-    </dl>
-    <details class="help">
-      <summary>토큰 만료일 고치기</summary>
-      <p class="muted small">GitHub 토큰 목록(Settings → Personal access tokens)에 보이는 만료일과 같게 맞추세요.</p>
-      <div class="fields">${expField('expEdit', '토큰 만료일', d.tokenExp)}</div>
-      <div class="row"><button type="button" class="btn" data-m="exp">만료일 저장</button></div>
+    <h3 class="set-group">자주 쓰는 것</h3>
+
+    <section class="set-card">
+      <h4>열 때 무엇을 물을까요?</h4>
+      <p class="muted small">이 기기에서 새로고침하거나 다시 열 때예요. 30일 동안 안 열면 다시 비밀번호를 물어요.</p>
+      <div class="open-modes">
+        <label class="check"><input type="radio" name="openMode" value="password"> <span>매번 비밀번호</span></label>
+        <label class="check"><input type="radio" name="openMode" value="pattern"> <span>패턴 <small class="muted">— 5번 틀리면 비밀번호</small></span></label>
+        <label class="check"><input type="radio" name="openMode" value="auto"> <span>묻지 않음 <small class="muted">— 나만 쓰는 기기에서만. 🔒을 누르면 꺼져요</small></span></label>
+      </div>
+      <div id="pat-set" hidden>
+        <p class="small" id="pat-set-msg"></p>
+        <div id="pat-set-pad" class="pat-wrap"></div>
+      </div>
+      <div class="fields">
+        <label class="field"><span>안 쓰면 자동으로 잠그기 (분) <small class="muted">— 묻지 않음일 땐 잠그지 않아요</small></span><input name="lockMin" type="number" min="1" max="240" value="${prefs.lockMin || 10}"></label>
+      </div>
+    </section>
+
+    <section class="set-card">
+      <h4>새 기기(휴대폰·다른 PC) 연결하기</h4>
+      <p class="muted small">새 기기는 <b>이미 연결된 기기에서만</b> 들일 수 있어요 (또는 토큰).</p>
+      <ul class="muted small steps">
+        <li><b>휴대폰:</b> QR 코드 보기 → 휴대폰 카메라로 찍기 → 같은 비밀번호</li>
+        <li><b>다른 PC:</b> 연결 링크 복사 → 나에게만 보내기(카톡 나와의 채팅 등) → 새 PC에서 링크 열기 → 같은 비밀번호. 보낸 메시지는 연결 후 지우세요</li>
+      </ul>
+      <div class="row"><button type="button" class="btn" data-m="qr">QR 코드 보기</button><button type="button" class="btn" data-m="link">연결 링크 복사</button></div>
+      <div id="qr-box" class="qr-box" hidden></div>
+    </section>
+
+    <section class="set-card">
+      <h4>백업 받아 두기</h4>
+      <p class="muted small">GitHub에 이미 저장돼 있지만, 만약을 위해 가끔 내 PC에도 받아 두세요. 받은 파일은 비밀번호로 암호화돼 있어요.</p>
+      <div class="row"><button type="button" class="btn" data-m="backup">백업 다운로드</button></div>
+    </section>
+
+    <h3 class="set-group">가끔 쓰는 것 <small class="muted">필요할 때만 펼치세요</small></h3>
+
+    <details class="set-item">
+      <summary><b>비밀번호 바꾸기</b><span>비밀번호를 바꾸고 싶을 때</span></summary>
+      <p class="muted small">데이터와 복구 코드는 그대로예요. 다른 기기에서는 다음에 열 때 새 비밀번호를 넣으면 돼요.</p>
+      <div class="fields">
+        ${userField()}
+        <label class="field"><span>현재 비밀번호</span><input name="pwCur" type="password" autocomplete="current-password"></label>
+        <span></span>
+        <label class="field"><span>새 비밀번호</span><input name="pwNew" type="password" autocomplete="new-password"></label>
+        <label class="field"><span>새 비밀번호 확인</span><input name="pwNew2" type="password" autocomplete="new-password"></label>
+      </div>
+      <div class="row"><button type="button" class="btn" data-m="pw">비밀번호 바꾸기</button></div>
     </details>
 
-    <h3>이 기기에서 열기</h3>
-    <p class="muted small">새로고침하거나 다시 열 때 무엇을 물을지 정해요. 이 기기에만 적용되고, 30일 동안 안 열면 다시 비밀번호를 물어요.</p>
-    <div class="open-modes">
-      <label class="check"><input type="radio" name="openMode" value="password"> 매번 비밀번호</label>
-      <label class="check"><input type="radio" name="openMode" value="pattern"> 패턴 <small class="muted">(5번 틀리면 비밀번호)</small></label>
-      <label class="check"><input type="radio" name="openMode" value="auto"> 묻지 않음 <small class="muted">(다른 사람도 쓰는 PC에서는 고르지 마세요. 🔒을 누르면 꺼져요)</small></label>
-    </div>
-    <div id="pat-set" hidden>
-      <p class="small" id="pat-set-msg"></p>
-      <div id="pat-set-pad" class="pat-wrap"></div>
-    </div>
+    <details class="set-item">
+      <summary><b>복구 코드 새로 받기</b><span>복구 코드를 잃어버렸을 때</span></summary>
+      <p class="muted small">복구 코드는 <b>비밀번호를 잊었을 때</b> 쓰는 비상 열쇠예요. 새로 받아도 <b>비밀번호는 그대로</b> 쓸 수 있고, 예전 복구 코드만 못 쓰게 돼요. 새 코드는 꼭 저장하세요.</p>
+      <div class="row"><button type="button" class="btn" data-m="rc">새 복구 코드 받기</button></div>
+      <div id="rc-box"></div>
+    </details>
 
-    <h3>다른 기기 연결 (휴대폰)</h3>
-    <p class="muted small">휴대폰 카메라로 QR 코드를 찍어 연 다음, 같은 비밀번호를 넣으세요. QR 안의 토큰은 비밀번호로 암호화돼 있어요.</p>
-    <div class="row"><button type="button" class="btn" data-m="qr">QR 코드 보기</button><button type="button" class="btn" data-m="link">연결 링크 복사</button></div>
-    <div id="qr-box" class="qr-box" hidden></div>
+    <details class="set-item">
+      <summary><b>GitHub 토큰</b><span>토큰이 만료됐거나 새로 만들었을 때</span></summary>
+      <p class="muted small">토큰을 바꿔도 <b>데이터·비밀번호·복구 코드는 그대로</b>예요. 바꾼 뒤 GitHub 토큰 목록에서 예전 토큰을 지우고, 휴대폰은 QR로 다시 연결하세요. 패턴이나 묻지 않음으로 열었다면 🔒 잠근 뒤 비밀번호로 열고 바꾸세요.</p>
+      <div class="fields">
+        <label class="field"><span>새 토큰</span><input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+        ${expField('tokenExp', '새 토큰 만료일')}
+      </div>
+      <div class="row"><button type="button" class="btn" data-m="token">토큰 바꾸기</button></div>
+      <p class="muted small sep">토큰은 그대로 두고 <b>만료일 표시만</b> 고치려면 (GitHub 토큰 목록에 보이는 날짜와 맞추세요)</p>
+      <div class="fields">${expField('expEdit', '만료일', d.tokenExp)}</div>
+      <div class="row"><button type="button" class="btn" data-m="exp">만료일만 저장</button></div>
+    </details>
 
-    <h3>자동 잠금</h3>
-    <div class="fields">
-      <label class="field"><span>사용하지 않으면 잠금 (분)</span><input name="lockMin" type="number" min="1" max="240" value="${prefs.lockMin || 10}"></label>
-    </div>
+    <details class="set-item">
+      <summary><b>백업으로 되돌리기</b><span>예전 백업 파일의 내용으로 돌아가고 싶을 때</span></summary>
+      <p class="muted small">지금 내용이 백업 파일 내용으로 바뀌어요. GitHub에 예전 기록이 남아 있어서 되돌린 것도 다시 되돌릴 수 있어요.</p>
+      <div class="fields">
+        <label class="field"><span>백업 받을 때 쓰던 비밀번호</span><input name="restorePw" type="password" autocomplete="off"></label>
+      </div>
+      <div class="row"><button type="button" class="btn" data-m="restore">백업 파일 고르기</button></div>
+      <p class="muted small sep">엑셀 등 다른 곳에서 쓰려면 암호화하지 않은 파일로 받을 수도 있어요. (받은 파일은 남이 볼 수 있으니 조심하세요)</p>
+      <div class="row"><button type="button" class="btn" data-m="export">암호화 안 한 파일로 받기</button></div>
+    </details>
 
-    <h3>비밀번호 변경</h3>
-    <div class="fields">
-      ${userField()}
-      <label class="field"><span>현재 비밀번호</span><input name="pwCur" type="password" autocomplete="current-password"></label>
-      <span></span>
-      <label class="field"><span>새 비밀번호</span><input name="pwNew" type="password" autocomplete="new-password"></label>
-      <label class="field"><span>새 비밀번호 확인</span><input name="pwNew2" type="password" autocomplete="new-password"></label>
-    </div>
-    <div class="row"><button type="button" class="btn" data-m="pw">비밀번호 변경</button></div>
+    <details class="set-item">
+      <summary><b>이 기기 연결 끊기</b><span>이 기기를 더 안 쓰거나, 다른 계정으로 연결할 때</span></summary>
+      <p class="muted small">이 기기에서만 연결을 끊어요. <b>GitHub의 데이터는 지워지지 않고</b>, 토큰이나 QR로 다시 연결하면 그대로 돌아와요. 아직 못 올린 변경이 있으면 끊지 않아요.</p>
+      <div class="row"><button type="button" class="btn" data-m="forget">이 기기 연결 끊기</button></div>
+    </details>
 
-    <h3>복구 코드</h3>
-    <p class="muted small">복구 코드는 <b>비밀번호를 잊었을 때</b> 새 비밀번호를 정하는 비상 열쇠예요. 새로 만들어도 <b>비밀번호는 그대로</b> 쓸 수 있고, 예전 복구 코드만 못 쓰게 돼요. 복구 코드를 잃어버렸을 때만 새로 만들고, 새 코드를 꼭 저장하세요.</p>
-    <div class="row"><button type="button" class="btn" data-m="rc">새 복구 코드 만들기</button></div>
-    <div id="rc-box"></div>
-
-    <h3>토큰 바꾸기</h3>
-    <p class="muted small">GitHub에서 토큰을 새로 만들어 넣어도 <b>데이터·비밀번호·복구 코드는 그대로</b>예요. 바꾼 뒤 GitHub 토큰 목록에서 예전 토큰을 지우고, 휴대폰은 QR로 다시 연결하세요. (패턴이나 묻지 않음으로 열었다면 🔒 잠근 뒤 비밀번호로 열고 바꾸세요)</p>
-    <div class="fields">
-      <label class="field"><span>새 토큰</span><input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
-      ${expField('tokenExp', '만료일')}
-    </div>
-    <div class="row"><button type="button" class="btn" data-m="token">토큰 바꾸기</button></div>
-
-    <h3>백업</h3>
-    <p class="muted small">글자 데이터와 파일 목록을 암호화된 파일 하나로 받아요. 첨부 파일 자체는 GitHub 파일 저장소에 남아 있어요.</p>
-    <div class="row">
-      <button type="button" class="btn" data-m="backup">백업 다운로드</button>
-      <button type="button" class="btn" data-m="export">평문 JSON 내보내기</button>
-    </div>
-    <div class="fields">
-      <label class="field"><span>백업 당시 비밀번호</span><input name="restorePw" type="password" autocomplete="off"></label>
-    </div>
-    <div class="row"><button type="button" class="btn" data-m="restore">백업 파일로 복원</button></div>
-
-    <h3>이 기기</h3>
-    <p class="muted small">이 기기에서만 연결을 끊어요. GitHub에 있는 데이터는 지워지지 않아요. 못 올린 변경이 있으면 끊지 않아요.</p>
-    <div class="row"><button type="button" class="btn" data-m="forget">이 기기 연결 해제</button></div>
+    <details class="set-item">
+      <summary><b>연결 정보</b><span>계정과 저장소</span></summary>
+      <dl class="kv">
+        <dt>계정</dt><dd>${esc(d.owner)}</dd>
+        <dt>데이터 저장소</dt><dd><a href="https://github.com/${esc(d.owner)}/${esc(d.repo)}" target="_blank" rel="noopener">${esc(d.repo)}</a> (비공개)</dd>
+        <dt>파일 저장소</dt><dd>${repos.length ? repos.map(r => `${esc(r.name)} ${fmtSize(r.bytes)}`).join(', ') : '아직 없음 (첫 파일을 올리면 만들어져요)'}</dd>
+        <dt>토큰 만료일</dt><dd>${esc(exp)}</dd>
+      </dl>
+    </details>
 
     <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
 
@@ -1695,7 +1758,7 @@ function openSettings() {
         pickFile('restore');
         break;
       case 'forget': guard(async () => {
-        if (!confirm('이 기기의 연결만 끊을까요?\nGitHub에 있는 데이터는 그대로이고, 토큰이나 QR로 다시 연결하면 모두 돌아와요.\n(아직 못 올린 변경이 있으면 끊지 않아요)')) return;
+        if (!confirm('이 기기의 연결을 끊을까요?\nGitHub에 있는 데이터는 그대로이고, 토큰이나 QR로 다시 연결하면 모두 돌아와요.\n(아직 못 올린 변경이 있으면 끊지 않아요)')) return;
         await store.forgetDevice();
         location.reload();
       }); break;
@@ -1717,6 +1780,16 @@ async function boot() {
   }
   const d = await store.loadDevice();
   if (!d) return connectScreen();
+  let tabId = null;
+  try { tabId = sessionStorage.getItem('hub.tab'); } catch {}
+  if (tabId) {
+    showLock('<h1>My Hub</h1><p class="muted">여는 중…</p>');
+    try {
+      if (await store.resumeTab(tabId)) return enterApp();
+    } catch {}
+  } else {
+    store.forgetTab(); // 닫힌 탭이 남긴 정보
+  }
   const si = await store.sessionInfo();
   if (si?.mode === 'pattern') return patternScreen();
   if (si?.mode === 'auto') {

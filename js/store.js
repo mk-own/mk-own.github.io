@@ -13,6 +13,7 @@
 //   f:<경로>  { sha, env, ver } 암호화된 조각 사본
 //   dirty    아직 GitHub에 못 올린 경로 목록
 //   session  비밀번호 없이 다시 열기 (켠 경우만). 데이터 키·토큰을 이 기기 전용 키나 패턴으로 암호화해 보관
+//   tab      새로고침해도 열린 채로 두기 (같은 탭, 12시간). 탭을 닫거나 잠그면 쓸 수 없음
 
 import { idbGet, idbSet, idbDel, idbKeys, idbClear } from './idb.js';
 import { GitHub } from './github.js';
@@ -40,6 +41,7 @@ export const S = {
   vaultSha: null,
   dek: null, // { raw, key }
   kek: null, // 비밀번호 KEK (토큰 재암호화용)
+  tabId: null, // 새로고침해도 열린 채로 둘 때의 탭 번호
   data: null,
   cache: {}, // path → { sha, env, ver }
   dirty: new Set(),
@@ -62,22 +64,29 @@ export async function loadDevice() {
   return S.device;
 }
 
+// 연결 정보 { o, r, b, s, i, t, x } → 기기 기록. t는 비밀번호 KEK로 암호화된 토큰
+function deviceFromJson(j) {
+  if (!j?.o || !j.r || !j.s || !j.t) return null;
+  return { owner: j.o, repo: j.r, branch: j.b || 'main', pw: { salt: j.s, iter: j.i || ITER, token: j.t }, rc: null, tokenExp: j.x || '' };
+}
+
+const connectJson = () => {
+  const d = S.device;
+  return { o: d.owner, r: d.repo, b: d.branch, s: d.pw.salt, i: d.pw.iter, t: d.pw.token, x: d.tokenExp || '' };
+};
+
 export function deviceFromLink(hash) {
   const m = hash.match(/connect=([A-Za-z0-9_-]+)/);
   if (!m) return null;
   try {
-    const j = JSON.parse(new TextDecoder().decode(unb64(m[1].replace(/-/g, '+').replace(/_/g, '/'))));
-    if (!j.o || !j.r || !j.s || !j.t) return null;
-    return { owner: j.o, repo: j.r, branch: j.b || 'main', pw: { salt: j.s, iter: j.i || ITER, token: j.t }, rc: null, tokenExp: j.x || '' };
+    return deviceFromJson(JSON.parse(new TextDecoder().decode(unb64(m[1].replace(/-/g, '+').replace(/_/g, '/')))));
   } catch {
     return null;
   }
 }
 
 export function connectLink() {
-  const d = S.device;
-  const j = { o: d.owner, r: d.repo, b: d.branch, s: d.pw.salt, i: d.pw.iter, t: d.pw.token, x: d.tokenExp || '' };
-  const enc = b64(new TextEncoder().encode(JSON.stringify(j))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const enc = b64(new TextEncoder().encode(JSON.stringify(connectJson()))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return `${location.origin}${location.pathname}#connect=${enc}`;
 }
 
@@ -240,6 +249,7 @@ export async function setPassword(newPassword, token = S.gh.token) {
   await deviceTokens(token, kek);
   const ses = await idbGet('session');
   if (ses) { ses.salt = salt; await idbSet('session', ses); }
+  if (S.tabId) await rememberTab(S.tabId);
 }
 
 export async function checkPassword(password) {
@@ -277,6 +287,7 @@ export async function replaceToken(token, tokenExp) {
   const ses = await idbGet('session');
   if (ses?.mode === 'auto') await rememberDevice('auto');
   else if (ses) await forgetSession();
+  if (S.tabId) await rememberTab(S.tabId);
 }
 
 export async function setTokenExp(tokenExp) {
@@ -315,6 +326,49 @@ export async function rememberDevice(mode, pattern) {
   await idbSet('session', ses);
 }
 
+// 새로고침해도 열린 채로 (같은 탭일 때만). 탭 번호는 sessionStorage에 있어서 탭을 닫으면 없어진다.
+// 데이터 키·토큰은 이 기기 전용 키로 암호화해 'tab'에 두고, 12시간 지나거나 잠그면 지운다
+const TAB_HOURS = 12;
+
+export async function rememberTab(tabId) {
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  const env = await encryptText(key, JSON.stringify({ dek: b64(S.dek.raw), token: S.gh.token }));
+  S.tabId = tabId;
+  await idbSet('tab', { tabId, key, env, salt: S.vault.pw.salt, until: Date.now() + TAB_HOURS * 36e5 });
+}
+
+export async function forgetTab() {
+  S.tabId = null;
+  await idbDel('tab');
+}
+
+export async function resumeTab(tabId) {
+  const t = await idbGet('tab');
+  if (!t || !tabId || t.tabId !== tabId || t.until < Date.now()) { await forgetTab(); return null; }
+  let secret;
+  try {
+    secret = JSON.parse(await decryptText(t.key, t.env));
+  } catch {
+    await forgetTab();
+    return null;
+  }
+  if (!(await openWith(secret, t.salt))) { await forgetTab(); return null; }
+  S.tabId = tabId;
+  return true;
+}
+
+// 꺼낸 데이터 키·토큰으로 연다. 그사이 다른 기기에서 비밀번호가 바뀌었으면 false
+async function openWith(secret, salt) {
+  S.gh = new GitHub(secret.token, S.device.owner);
+  const raw = unb64(secret.dek);
+  S.dek = { raw, key: await importDEK(raw) };
+  S.kek = null;
+  await fetchVault();
+  if (S.vault.pw.salt !== salt) { S.dek = null; return false; }
+  await loadData();
+  return true;
+}
+
 // 저장해 둔 열기 정보로 연다. 패턴이 틀리면 Error, 열기 정보가 쓸모없어졌으면 null
 export async function resume(pattern) {
   const ses = await idbGet('session');
@@ -330,21 +384,11 @@ export async function resume(pattern) {
     await idbSet('session', ses);
     throw new Error(`패턴이 맞지 않아요. ${PATTERN_TRIES - ses.fails}번 더 틀리면 비밀번호로 열어야 해요.`);
   }
-  S.gh = new GitHub(secret.token, S.device.owner);
-  const raw = unb64(secret.dek);
-  S.dek = { raw, key: await importDEK(raw) };
-  S.kek = null;
-  await fetchVault();
-  if (S.vault.pw.salt !== ses.salt) {
-    // 다른 기기에서 비밀번호가 바뀜 → 새 비밀번호로 열어야 함
-    S.dek = null;
-    await forgetSession();
-    return null;
-  }
   ses.fails = 0;
   ses.until = Date.now() + SESSION_DAYS * 864e5;
   await idbSet('session', ses);
-  await loadData();
+  // 다른 기기에서 비밀번호가 바뀌었으면 새 비밀번호로 열어야 함
+  if (!(await openWith(secret, ses.salt))) { await forgetSession(); return null; }
   return true;
 }
 
