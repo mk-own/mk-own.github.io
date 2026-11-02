@@ -88,6 +88,16 @@ function showLock(html) {
 }
 
 const inAYear = () => ymd(new Date(Date.now() + 365 * 864e5));
+// 토큰 만료일 칸. "만료 없음"을 고르면 'none'으로 저장한다
+const expField = (name, label) => `
+  <label class="field"><span>${label} <small class="muted">(만료 전에 알려드려요)</small></span>
+    <input name="${name}" type="date" value="${inAYear()}" disabled></label>
+  <label class="check"><input type="checkbox" data-no-exp="${name}" checked> 만료 없음 (No expiration)</label>`;
+const expValue = input => input.disabled ? 'none' : input.value;
+document.addEventListener('change', e => {
+  const n = e.target.dataset?.noExp;
+  if (n) e.target.form.elements[n].disabled = e.target.checked;
+});
 // Chrome 비밀번호 저장용 (화면에는 안 보임)
 const userField = () => '<input class="sr-only" type="text" name="username" autocomplete="username" value="My Hub" tabindex="-1" aria-hidden="true">';
 
@@ -96,7 +106,7 @@ const TOKEN_HELP = `
     <summary>토큰 만드는 방법</summary>
     <ol>
       <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub 새 토큰 만들기</a>를 여세요 (GitHub에 로그인한 상태로).</li>
-      <li><b>Token name</b>: my-hub · <b>Expiration</b>: Custom → 1년 뒤 날짜</li>
+      <li><b>Token name</b>: my-hub · <b>Expiration</b>: <b>No expiration</b></li>
       <li><b>Repository access</b>: <b>All repositories</b> (파일 저장소를 자동으로 늘리려면 필요해요)</li>
       <li><b>Permissions</b> → Repository permissions에서
         <b>Contents</b>: Read and write, <b>Administration</b>: Read and write</li>
@@ -111,7 +121,7 @@ function connectScreen(err = '') {
     <div class="note"><b>휴대폰이라면</b> PC에서 설정 → <b>다른 기기 연결</b>의 QR 코드를 카메라로 찍으세요.</div>
     <form id="f-connect" class="lock-form" autocomplete="off">
       <label class="field"><span>GitHub 토큰</span><input name="token" type="password" placeholder="github_pat_…" required></label>
-      <label class="field"><span>토큰 만료일 <small class="muted">(만료 전에 알려드려요)</small></span><input name="exp" type="date" value="${inAYear()}"></label>
+      ${expField('exp', '토큰 만료일')}
       <button class="btn primary" type="submit">연결</button>
       <p class="err" role="alert">${esc(err)}</p>
     </form>
@@ -121,7 +131,7 @@ function connectScreen(err = '') {
     const f = e.target;
     await busy(f, '연결 중…', async () => {
       const { hasVault } = await store.connectWithToken(f.token.value.trim());
-      ui.tokenExp = f.exp.value;
+      ui.tokenExp = expValue(f.exp);
       hasVault ? existingScreen() : setupScreen();
     });
   };
@@ -445,7 +455,7 @@ const todayName = () => DAYS[(new Date().getDay() + 6) % 7];
 
 function tokenBanner() {
   const exp = S.device?.tokenExp;
-  if (!exp) return '';
+  if (!exp || exp === 'none') return '';
   const d = daysUntil(exp);
   if (d > 30) return '';
   return `<div class="banner ${d <= 7 ? 'bad' : ''}">⚠ GitHub 토큰이 ${d < 0 ? '만료됐어요' : d === 0 ? '오늘 만료돼요' : `${d}일 뒤 만료돼요`} (${exp}).
@@ -1221,7 +1231,7 @@ function openSettings() {
   const d = S.device;
   const prefs = lsGet(LS.prefs) || {};
   const repos = store.usage();
-  const exp = d.tokenExp ? `${d.tokenExp} (${daysUntil(d.tokenExp) >= 0 ? `${daysUntil(d.tokenExp)}일 남음` : '만료됨'})` : '모름';
+  const exp = d.tokenExp === 'none' ? '없음' : d.tokenExp ? `${d.tokenExp} (${daysUntil(d.tokenExp) >= 0 ? `${daysUntil(d.tokenExp)}일 남음` : '만료됨'})` : '모름';
   mform.innerHTML = `
     <h2>설정</h2>
 
@@ -1261,7 +1271,7 @@ function openSettings() {
     <h3>토큰 바꾸기</h3>
     <div class="fields">
       <label class="field"><span>새 토큰</span><input name="token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
-      <label class="field"><span>만료일</span><input name="tokenExp" type="date" value="${inAYear()}"></label>
+      ${expField('tokenExp', '만료일')}
     </div>
     <div class="row"><button type="button" class="btn" data-m="token">토큰 바꾸기</button></div>
 
@@ -1327,7 +1337,7 @@ function openSettings() {
       case 'token': guard(async () => {
         const t = el.token.value.trim();
         if (!t) throw new Error('새 토큰을 넣어주세요.');
-        await store.replaceToken(t, el.tokenExp.value);
+        await store.replaceToken(t, expValue(el.tokenExp));
         el.token.value = '';
         toast('토큰을 바꿨어요. 휴대폰은 QR로 다시 연결하세요.');
         render();

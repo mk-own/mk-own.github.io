@@ -20,6 +20,7 @@ https://mk-own.github.io — PC와 휴대폰 브라우저에서 같은 데이터
 ## 처음 설정
 
 1. GitHub → Settings → Developer settings → **Fine-grained token** 만들기
+   - Expiration: **No expiration** (개인 계정은 만료 없이 만들 수 있다)
    - Repository access: **All repositories** (파일 저장소를 자동으로 만들기 위해)
    - Permissions: **Contents** Read and write, **Administration** Read and write
 2. https://mk-own.github.io 에서 토큰 입력 → 비밀번호 정하기 → **복구 코드 저장**
