@@ -13,6 +13,14 @@ export const num = v => {
 const memo = { k: 'memo', l: '메모', type: 'textarea' };
 const person = { k: 'person', l: '대상' };
 
+export const DAYS = ['월', '화', '수', '목', '금', '토', '일'];
+
+export function whenText(r) {
+  const days = Array.isArray(r.days) ? DAYS.filter(d => r.days.includes(d)).join('·') : '';
+  const time = r.t1 ? `${r.t1}${r.t2 ? `~${r.t2}` : ''}` : '';
+  return [days, time].filter(Boolean).join(' ') || r.schedule || '';
+}
+
 export const COLLECTIONS = {
   insurance: {
     title: '보험',
@@ -129,7 +137,10 @@ export const COLLECTIONS = {
       { k: 'name', l: '이름', req: true },
       { k: 'org', l: '기관/선생님' },
       { k: 'status', l: '상태', type: 'select', opts: ['진행중', '예정', '완료', '중단'] },
-      { k: 'schedule', l: '일정', hint: '예: 월·수 16:00' },
+      { k: 'days', l: '요일', type: 'days' },
+      { k: 't1', l: '시작 시간', type: 'time' },
+      { k: 't2', l: '끝 시간', type: 'time' },
+      { k: 'schedule', l: '일정 메모', hint: '예: 격주 토요일, 방학 중 휴강' },
       { k: 'fee', l: '월 비용', type: 'money' },
       { k: 'start', l: '시작일', type: 'date' },
       { k: 'end', l: '종료일', type: 'date', due: '교육 종료' },
@@ -137,7 +148,7 @@ export const COLLECTIONS = {
       { k: 'url', l: '링크', type: 'url' },
       memo,
     ],
-    cols: ['person', 'kind', 'name', 'org', 'status', 'schedule', 'fee', 'end'],
+    cols: ['person', 'kind', 'name', 'org', 'status', { k: '_when', l: '일정', type: 'text', fn: whenText }, 'fee', 'end'],
     monthly: r => (r.status === '진행중' ? num(r.fee) : 0),
     label: r => [r.person, r.name].filter(Boolean).join(' · '),
   },
@@ -211,25 +222,30 @@ export const COLLECTIONS = {
       memo,
     ],
     cols: [],
+    noAttach: true,
   },
+
+  // 첨부 파일 정보 (화면에 표로 나오지 않음). pk/pid = 붙어 있는 목록/항목, 자료실이면 pk = 'library'
+  files: { title: '파일', fields: [], cols: [], noAttach: true },
 };
+
+// 목록이 아닌 특별한 탭
+export const VIEWS = { timetable: '시간표' };
 
 export const SECTIONS = [
   { id: 'home', title: '홈' },
   { id: 'assets', title: '자산관리', tabs: ['insurance', 'stocks', 'pension', 'savings', 'realestate', 'loans'] },
-  { id: 'education', title: '교육', tabs: ['education'] },
+  { id: 'education', title: '교육', tabs: ['education', 'timetable'] },
   { id: 'health', title: '건강', tabs: ['records', 'checkups', 'meds', 'hospitals'] },
+  { id: 'library', title: '자료실' },
   { id: 'links', title: '링크' },
 ];
 
 export const ASSET_KEYS = SECTIONS[1].tabs;
 
 export function emptyData() {
-  return { version: 1, updatedAt: '', items: Object.fromEntries(Object.keys(COLLECTIONS).map(k => [k, []])) };
-}
-
-export function migrate(d) {
-  const base = emptyData();
-  d.items = { ...base.items, ...(d.items || {}) };
-  return d;
+  return {
+    items: Object.fromEntries(Object.keys(COLLECTIONS).map(k => [k, []])),
+    sys: { repos: [] },
+  };
 }
