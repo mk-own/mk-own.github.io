@@ -12,11 +12,12 @@
 //   vault    vault.json 사본 (오프라인에서도 열 수 있게)
 //   f:<경로>  { sha, env, ver } 암호화된 조각 사본
 //   dirty    아직 GitHub에 못 올린 경로 목록
+//   session  비밀번호 없이 다시 열기 (켠 경우만). 데이터 키·토큰을 이 기기 전용 키나 패턴으로 암호화해 보관
 
 import { idbGet, idbSet, idbDel, idbKeys, idbClear } from './idb.js';
 import { GitHub } from './github.js';
 import {
-  ITER, RITER, b64, unb64, newSalt, deriveKEK, newDEK, wrapDEK, unwrapDEK,
+  ITER, RITER, b64, unb64, newSalt, deriveKEK, importDEK, newDEK, wrapDEK, unwrapDEK,
   encryptText, decryptText, encryptBytes, decryptBytes, newRecoveryCode, normCode,
 } from './crypto.js';
 import { emptyData } from './schemas.js';
@@ -237,6 +238,8 @@ export async function setPassword(newPassword, token = S.gh.token) {
   await putVault();
   S.kek = kek;
   await deviceTokens(token, kek);
+  const ses = await idbGet('session');
+  if (ses) { ses.salt = salt; await idbSet('session', ses); }
 }
 
 export async function checkPassword(password) {
@@ -261,6 +264,7 @@ export async function newRecovery() {
 }
 
 export async function replaceToken(token, tokenExp) {
+  if (!S.kek) throw new Error('토큰을 바꾸려면 잠근 뒤 비밀번호로 열어주세요.');
   const gh = new GitHub(token);
   const u = await gh.user();
   if (u.login !== S.device.owner) throw new Error(`이 토큰은 ${u.login} 계정이에요. ${S.device.owner} 계정의 토큰을 넣어주세요.`);
@@ -269,6 +273,79 @@ export async function replaceToken(token, tokenExp) {
   S.device.tokenExp = tokenExp || '';
   S.device.rc = null; // 복구 코드용 토큰 사본은 예전 토큰이라 버림
   await deviceTokens(token, S.kek);
+  // 저장해 둔 열기 정보에는 예전 토큰이 들어 있다. 자동 열기는 새 토큰으로 다시 만들고, 패턴은 다시 그려야 함
+  const ses = await idbGet('session');
+  if (ses?.mode === 'auto') await rememberDevice('auto');
+  else if (ses) await forgetSession();
+}
+
+export async function setTokenExp(tokenExp) {
+  S.device.tokenExp = tokenExp || '';
+  await saveDevice(S.device);
+}
+
+// ---------- 비밀번호 없이 다시 열기 ----------
+// mode 'auto': 묻지 않고 열기. 이 기기 전용 키(JS에서 꺼낼 수 없는 키)로 암호화
+// mode 'pattern': 패턴으로 만든 키로 암호화. 5번 틀리면 지우고 비밀번호로만 열 수 있음
+// 30일 동안 안 열면 지워진다. 다른 기기에서 비밀번호를 바꿔도 지워진다
+
+const SESSION_DAYS = 30;
+const PATTERN_ITER = 300000;
+const PATTERN_TRIES = 5;
+
+export const sessionInfo = async () => {
+  const s = await idbGet('session');
+  return s && s.until > Date.now() ? { mode: s.mode, until: s.until, left: PATTERN_TRIES - (s.fails || 0) } : null;
+};
+
+export async function forgetSession() {
+  await idbDel('session');
+}
+
+export async function rememberDevice(mode, pattern) {
+  const secret = JSON.stringify({ dek: b64(S.dek.raw), token: S.gh.token });
+  const ses = { mode, salt: S.vault.pw.salt, until: Date.now() + SESSION_DAYS * 864e5, fails: 0 };
+  if (mode === 'pattern') {
+    ses.psalt = newSalt();
+    ses.env = await encryptText(await deriveKEK(pattern, ses.psalt, PATTERN_ITER), secret);
+  } else {
+    ses.key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    ses.env = await encryptText(ses.key, secret);
+  }
+  await idbSet('session', ses);
+}
+
+// 저장해 둔 열기 정보로 연다. 패턴이 틀리면 Error, 열기 정보가 쓸모없어졌으면 null
+export async function resume(pattern) {
+  const ses = await idbGet('session');
+  if (!ses || ses.until < Date.now()) { await forgetSession(); return null; }
+  let secret;
+  try {
+    const key = ses.mode === 'pattern' ? await deriveKEK(pattern, ses.psalt, PATTERN_ITER) : ses.key;
+    secret = JSON.parse(await decryptText(key, ses.env));
+  } catch {
+    if (ses.mode !== 'pattern') { await forgetSession(); return null; }
+    ses.fails = (ses.fails || 0) + 1;
+    if (ses.fails >= PATTERN_TRIES) { await forgetSession(); return null; }
+    await idbSet('session', ses);
+    throw new Error(`패턴이 맞지 않아요. ${PATTERN_TRIES - ses.fails}번 더 틀리면 비밀번호로 열어야 해요.`);
+  }
+  S.gh = new GitHub(secret.token, S.device.owner);
+  const raw = unb64(secret.dek);
+  S.dek = { raw, key: await importDEK(raw) };
+  S.kek = null;
+  await fetchVault();
+  if (S.vault.pw.salt !== ses.salt) {
+    // 다른 기기에서 비밀번호가 바뀜 → 새 비밀번호로 열어야 함
+    S.dek = null;
+    await forgetSession();
+    return null;
+  }
+  ses.fails = 0;
+  ses.until = Date.now() + SESSION_DAYS * 864e5;
+  await idbSet('session', ses);
+  await loadData();
+  return true;
 }
 
 export async function forgetDevice() {

@@ -503,3 +503,12 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
   .sw-row .sw-pct { grid-column: 1; }
   .sw-row [data-act=sw-row-del] { justify-self: end; }
 }
+
+/* 패턴 */
+.pat-wrap { display: flex; justify-content: center; margin: 8px 0; }
+.pattern { width: 240px; max-width: 100%; aspect-ratio: 1; touch-action: none; user-select: none; -webkit-user-select: none; cursor: pointer; }
+.pat-dot { fill: var(--surface-2); stroke: var(--text-2); stroke-width: 3; }
+.pat-dot.on { fill: var(--accent); stroke: var(--accent); }
+.pat-line { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
+.open-modes { display: grid; gap: 8px; margin-bottom: 8px; }
+.open-modes input[type=radio] { width: 18px; height: 18px; accent-color: var(--accent); }

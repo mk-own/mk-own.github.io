@@ -93,10 +93,13 @@ function showLock(html) {
 
 const inAYear = () => ymd(new Date(Date.now() + 365 * 864e5));
 // 토큰 만료일 칸. "만료 없음"을 고르면 'none'으로 저장한다
-const expField = (name, label) => `
+const expField = (name, label, cur = 'none') => {
+  const none = !cur || cur === 'none';
+  return `
   <label class="field"><span>${label} <small class="muted">(만료 전에 알려드려요)</small></span>
-    <input name="${name}" type="date" value="${inAYear()}" disabled></label>
-  <label class="check"><input type="checkbox" data-no-exp="${name}" checked> 만료 없음 (No expiration)</label>`;
+    <input name="${name}" type="date" value="${none ? inAYear() : esc(cur)}"${none ? ' disabled' : ''}></label>
+  <label class="check"><input type="checkbox" data-no-exp="${name}"${none ? ' checked' : ''}> 만료 없음 (No expiration)</label>`;
+};
 const expValue = input => input.disabled ? 'none' : input.value;
 document.addEventListener('change', e => {
   const n = e.target.dataset?.noExp;
@@ -204,7 +207,7 @@ function existingScreen() {
   };
 }
 
-function unlockScreen() {
+function unlockScreen(msg = '') {
   showLock(`
     <h1>My Hub</h1>
     <p class="muted">비밀번호를 입력하세요.</p>
@@ -212,8 +215,9 @@ function unlockScreen() {
       ${userField()}
       <input name="pw" type="password" placeholder="비밀번호" autocomplete="current-password" required>
       <button class="btn primary" type="submit">열기</button>
-      <p class="err" role="alert"></p>
+      <p class="err" role="alert">${esc(msg)}</p>
     </form>
+    <p class="muted small">매번 넣기 번거로우면 열고 나서 설정 → <b>이 기기에서 열기</b>에서 패턴이나 묻지 않음을 고르세요.</p>
     <div class="lock-links">
       <button class="btn ghost small" type="button" data-l="recover">비밀번호를 잊었어요</button>
       <button class="btn ghost small" type="button" data-l="reconnect">다시 연결</button>
@@ -226,6 +230,93 @@ function unlockScreen() {
       enterApp();
     });
   };
+}
+
+// ----- 패턴 -----
+
+// 3×3 점 패턴. 손을 떼면 onDone('0125' 같은 문자열)
+function patternPad(box, onDone) {
+  const P = [50, 150, 250];
+  const pts = P.flatMap(y => P.map(x => ({ x, y })));
+  box.innerHTML = `<svg class="pattern" viewBox="0 0 300 300" role="img" aria-label="패턴 입력">
+    <polyline class="pat-line" points="" />
+    ${pts.map((d, i) => `<circle class="pat-dot" data-i="${i}" cx="${d.x}" cy="${d.y}" r="14" />`).join('')}
+  </svg>`;
+  const svg = box.querySelector('svg'), line = svg.querySelector('polyline');
+  let seq = [], drawing = false;
+  const at = e => {
+    const r = svg.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * 300 / r.width, y: (e.clientY - r.top) * 300 / r.height };
+  };
+  const add = i => {
+    if (seq.includes(i)) return;
+    // 건너뛴 가운데 점은 같이 넣는다 (0→2면 1도)
+    const last = seq[seq.length - 1];
+    if (last != null && (last % 3 + i % 3) % 2 === 0 && (Math.floor(last / 3) + Math.floor(i / 3)) % 2 === 0) {
+      const mid = (last + i) / 2;
+      if (!seq.includes(mid)) seq.push(mid);
+    }
+    seq.push(i);
+  };
+  const draw = cur => {
+    svg.querySelectorAll('.pat-dot').forEach(c => c.classList.toggle('on', seq.includes(+c.dataset.i)));
+    const ps = seq.map(i => `${pts[i].x},${pts[i].y}`);
+    if (cur) ps.push(`${cur.x},${cur.y}`);
+    line.setAttribute('points', ps.join(' '));
+  };
+  const hit = p => pts.findIndex(d => (d.x - p.x) ** 2 + (d.y - p.y) ** 2 < 36 ** 2);
+  svg.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    svg.setPointerCapture(e.pointerId);
+    drawing = true;
+    seq = [];
+    const p = at(e), i = hit(p);
+    if (i >= 0) add(i);
+    draw(p);
+  });
+  svg.addEventListener('pointermove', e => {
+    if (!drawing) return;
+    const p = at(e), i = hit(p);
+    if (i >= 0) add(i);
+    draw(p);
+  });
+  const end = () => {
+    if (!drawing) return;
+    drawing = false;
+    draw();
+    if (seq.length) onDone(seq.join(''));
+  };
+  svg.addEventListener('pointerup', end);
+  svg.addEventListener('pointercancel', end);
+  return { reset: () => { seq = []; draw(); } };
+}
+
+function patternScreen(msg = '') {
+  showLock(`
+    <h1>My Hub</h1>
+    <p class="muted">패턴을 그리세요.</p>
+    <div id="pat-pad" class="pat-wrap"></div>
+    <p class="err" role="alert" id="pat-err">${esc(msg)}</p>
+    <div class="lock-links">
+      <button class="btn ghost small" type="button" data-l="back">비밀번호로 열기</button>
+    </div>`);
+  let working = false;
+  const err = $('#pat-err');
+  const pad = patternPad($('#pat-pad'), async seq => {
+    if (working) return;
+    if (seq.length < 4) { err.textContent = '점을 4개 이상 이어주세요.'; pad.reset(); return; }
+    working = true;
+    err.textContent = '여는 중…';
+    try {
+      if (await store.resume(seq)) enterApp();
+      else unlockScreen('비밀번호로 열어주세요. (패턴을 5번 틀렸거나, 30일 넘게 안 썼거나, 비밀번호가 바뀌었어요)');
+    } catch (e) {
+      err.textContent = e.message;
+      pad.reset();
+    } finally {
+      working = false;
+    }
+  });
 }
 
 function recoverScreen() {
@@ -336,7 +427,7 @@ function enterApp() {
   history.replaceState(null, '', location.pathname + (location.hash.startsWith('#/') ? location.hash : '#/home'));
   render();
   renderSync();
-  armIdle();
+  store.sessionInfo().then(si => { ui.session = si; armIdle(); });
 }
 
 S.onStatus = () => renderSync();
@@ -362,7 +453,8 @@ $('#sync').addEventListener('click', () => store.upload());
 let idleTimer;
 function armIdle() {
   clearTimeout(idleTimer);
-  if (!S.dek) return;
+  // 묻지 않음이면 잠가도 바로 다시 열리므로 자동 잠금은 하지 않는다
+  if (!S.dek || ui.session?.mode === 'auto') return;
   const min = lsGet(LS.prefs)?.lockMin || 10;
   idleTimer = setTimeout(lockNow, min * 60000);
 }
@@ -375,7 +467,11 @@ async function lockNow() {
 for (const ev of ['pointerdown', 'keydown', 'scroll', 'touchstart']) {
   addEventListener(ev, () => { if (S.dek) armIdle(); }, { passive: true });
 }
-$('#lock-now').addEventListener('click', lockNow);
+// 잠금 버튼: 묻지 않음을 켜 둔 경우 그것도 끄고 잠근다 (다음엔 비밀번호)
+$('#lock-now').addEventListener('click', async () => {
+  if (ui.session?.mode === 'auto') await store.forgetSession();
+  lockNow();
+});
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && S.dirty.size) store.upload();
@@ -1408,6 +1504,24 @@ function openSettings() {
       <dt>파일 저장소</dt><dd>${repos.length ? repos.map(r => `${esc(r.name)} ${fmtSize(r.bytes)}`).join(', ') : '아직 없음 (첫 파일을 올리면 만들어져요)'}</dd>
       <dt>토큰 만료일</dt><dd>${esc(exp)}</dd>
     </dl>
+    <details class="help">
+      <summary>토큰 만료일 고치기</summary>
+      <p class="muted small">GitHub 토큰 목록(Settings → Personal access tokens)에 보이는 만료일과 같게 맞추세요.</p>
+      <div class="fields">${expField('expEdit', '토큰 만료일', d.tokenExp)}</div>
+      <div class="row"><button type="button" class="btn" data-m="exp">만료일 저장</button></div>
+    </details>
+
+    <h3>이 기기에서 열기</h3>
+    <p class="muted small">새로고침하거나 다시 열 때 무엇을 물을지 정해요. 이 기기에만 적용되고, 30일 동안 안 열면 다시 비밀번호를 물어요.</p>
+    <div class="open-modes">
+      <label class="check"><input type="radio" name="openMode" value="password"> 매번 비밀번호</label>
+      <label class="check"><input type="radio" name="openMode" value="pattern"> 패턴 <small class="muted">(5번 틀리면 비밀번호)</small></label>
+      <label class="check"><input type="radio" name="openMode" value="auto"> 묻지 않음 <small class="muted">(다른 사람도 쓰는 PC에서는 고르지 마세요. 🔒을 누르면 꺼져요)</small></label>
+    </div>
+    <div id="pat-set" hidden>
+      <p class="small" id="pat-set-msg"></p>
+      <div id="pat-set-pad" class="pat-wrap"></div>
+    </div>
 
     <h3>다른 기기 연결 (휴대폰)</h3>
     <p class="muted small">휴대폰 카메라로 QR 코드를 찍어 연 다음, 같은 비밀번호를 넣으세요. QR 안의 토큰은 비밀번호로 암호화돼 있어요.</p>
@@ -1458,6 +1572,39 @@ function openSettings() {
     <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
 
   mform.onsubmit = e => e.preventDefault();
+  const modeRadios = [...mform.querySelectorAll('[name=openMode]')];
+  const showMode = () => { const m = ui.session?.mode || 'password'; modeRadios.forEach(r => { r.checked = r.value === m; }); };
+  showMode();
+  const modeDone = async () => { ui.session = await store.sessionInfo(); showMode(); armIdle(); };
+  for (const r of modeRadios) r.onchange = async () => {
+    const box = $('#pat-set');
+    box.hidden = true;
+    try {
+      if (r.value === 'password') { await store.forgetSession(); toast('이제 열 때마다 비밀번호를 물어요.'); }
+      if (r.value === 'auto') { await store.rememberDevice('auto'); toast('이 기기에서는 비밀번호 없이 열려요. 자리를 비울 땐 🔒을 누르세요.'); }
+      if (r.value === 'pattern') {
+        // 두 번 같게 그려야 저장. 그 전까지 열기 방식은 그대로
+        box.hidden = false;
+        const msg = $('#pat-set-msg');
+        msg.textContent = '새 패턴을 그리세요. (점 4개 이상)';
+        let first = '';
+        const pad = patternPad($('#pat-set-pad'), async seq => {
+          if (seq.length < 4) { msg.textContent = '점을 4개 이상 이어주세요.'; pad.reset(); return; }
+          if (!first) { first = seq; msg.textContent = '확인을 위해 한 번 더 그리세요.'; pad.reset(); return; }
+          if (seq !== first) { first = ''; msg.textContent = '두 패턴이 달라요. 처음부터 다시 그리세요.'; pad.reset(); return; }
+          msg.textContent = '저장 중…';
+          try {
+            await store.rememberDevice('pattern', seq);
+            box.hidden = true;
+            toast('패턴을 저장했어요. 다음부터 패턴으로 열려요.');
+          } catch (e) { toast(e.message, true); }
+          await modeDone();
+        });
+        return;
+      }
+    } catch (e) { toast(e.message, true); }
+    await modeDone();
+  };
   mform.elements.lockMin.onchange = e => {
     lsSet(LS.prefs, { ...(lsGet(LS.prefs) || {}), lockMin: Math.max(1, Number(e.target.value) || 10) });
     armIdle();
@@ -1472,6 +1619,11 @@ function openSettings() {
     };
     switch (btn.dataset.m) {
       case 'close': modal.close(); break;
+      case 'exp': guard(async () => {
+        await store.setTokenExp(expValue(el.expEdit));
+        toast('토큰 만료일을 저장했어요.');
+        openSettings();
+      }); break;
       case 'qr': guard(async () => {
         const qrcode = await loadQr();
         const qr = qrcode(0, 'M');
@@ -1546,8 +1698,19 @@ async function boot() {
     toast('이 기기를 연결했어요. 비밀번호를 넣으세요.');
   }
   const d = await store.loadDevice();
-  if (d) unlockScreen();
-  else connectScreen();
+  if (!d) return connectScreen();
+  const si = await store.sessionInfo();
+  if (si?.mode === 'pattern') return patternScreen();
+  if (si?.mode === 'auto') {
+    showLock('<h1>My Hub</h1><p class="muted">여는 중…</p>');
+    try {
+      if (await store.resume()) return enterApp();
+    } catch (e) {
+      return unlockScreen(e.message);
+    }
+    return unlockScreen('비밀번호로 열어주세요. (30일 넘게 안 썼거나 비밀번호가 바뀌었어요)');
+  }
+  unlockScreen();
 }
 
 boot();
