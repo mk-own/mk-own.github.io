@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>My Hub</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M9 22V10h3l4 6 4-6h3v12h-3v-7l-4 5.5L12 15v7z' fill='white'/></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 잠금 화면 -->
+  <main id="lock" class="lock" hidden>
+    <form id="lock-form" class="lock-card" autocomplete="off">
+      <div class="lock-logo" aria-hidden="true">M</div>
+      <h1>My Hub</h1>
+      <p id="lock-desc" class="muted">비밀번호를 입력하세요.</p>
+      <input id="lock-pw" type="password" placeholder="비밀번호" autocomplete="current-password" required>
+      <input id="lock-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password" hidden>
+      <button id="lock-btn" class="btn primary" type="submit">열기</button>
+      <p id="lock-err" class="err" role="alert"></p>
+    </form>
+  </main>
+
+  <!-- 본 화면 -->
+  <div id="app" hidden>
+    <header class="topbar">
+      <a class="brand" href="#/home">My Hub</a>
+      <nav id="nav" class="nav"></nav>
+      <div class="top-actions">
+        <button id="sync-btn" class="btn small" type="button"></button>
+        <button id="settings-btn" class="icon-btn" type="button" title="설정" aria-label="설정">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+        <button id="lock-now" class="icon-btn" type="button" title="잠금" aria-label="잠금">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        </button>
+      </div>
+    </header>
+    <main id="view" class="view"></main>
+  </div>
+
+  <dialog id="modal"><form id="modal-form" method="dialog"></form></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="tip" class="tip" hidden></div>
+  <input id="file-input" type="file" hidden>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
