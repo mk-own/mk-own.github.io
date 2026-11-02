@@ -78,6 +78,93 @@ export function decide(p) {
   };
 }
 
+// ── 가격 파일(my-prices/prices/{code}.json)로 계산 ──
+// data = { code, name, us, updated, partial, c: [['YYYY-MM-DD', 시가, 고가, 저가, 종가], …] }
+// partial이면 마지막 봉은 장중이라 종가가 확정 아님
+
+const closedOf = data => (data.partial ? data.c.slice(0, -1) : data.c);
+
+export function ma200Line(c) {
+  const out = new Array(c.length).fill(null);
+  let s = 0;
+  for (let i = 0; i < c.length; i++) {
+    s += c[i][4];
+    if (i >= 200) s -= c[i - 200][4];
+    if (i >= 199) out[i] = s / 200;
+  }
+  return out;
+}
+
+// 200일선이 20거래일 전보다 높으면 true
+export function ma200Up(c, i, ma = ma200Line(c)) {
+  return i >= 219 && ma[i] != null && ma[i - 20] != null && ma[i] >= ma[i - 20];
+}
+
+function seoulToday() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date()).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+// 오늘 할 일 카드에 채울 값
+//   미국: 마지막 확정 봉(어젯밤) → { date, open, close, maUp, final: true }
+//   국내 장중: 오늘 시가만 → close: null (15:20 예상체결가는 사용자가 넣음), final: false
+//   국내 장 마감 뒤나 장 전: 마지막 봉 그대로 (today가 false면 오늘 봉이 아직 없음)
+export function todayInputs(data) {
+  const c = closedOf(data), ma = ma200Line(c), L = c.length - 1;
+  if (L < 0) return null;
+  const maUp = ma200Up(c, L, ma);
+  if (!data.us && data.partial) {
+    const k = data.c.at(-1);
+    return { date: k[0], open: k[1], close: null, maUp, final: false, today: true };
+  }
+  return { date: c[L][0], open: c[L][1], close: c[L][4], maUp, final: true, today: !data.us && c[L][0] === seoulToday() };
+}
+
+// 과거에 규칙대로 했다면: amount(국내 원, 미국 $)로 start('YYYY-MM-DD', 선택)부터 시작
+//   국내: 그날 봉으로 판단해 그날 종가 체결 · 미국: 전날 봉으로 판단해 오늘 밤 LOC/MOC 체결 (화면의 주문 방식과 같음)
+//   events: { t, side: 'buy'|'sell', kind: 'buy'|'tp'|'sl', qty, price, amount, units, avg, pnl?, ret? }
+//   equity: [[t, 평가금액]] · summary: { start, end, ret, cagr, mdd, trades, wins, hold, from, to } · position: 끝난 뒤 보유 상태
+export function simulate(data, { amount, start = '', end = '' } = {}) {
+  const c = closedOf(data), us = !!data.us, ma = ma200Line(c), a0 = n(amount);
+  const at = c.findIndex(k => k[0] >= start), i0 = Math.max(220, at);
+  if (!a0 || at < 0 || i0 >= c.length) return { events: [], equity: [], summary: null, position: null };
+  let s = { account: a0, units: 0, qty: 0, avg: 0, us };
+  const events = [], equity = [];
+  let peak = a0, mdd = 0, wins = 0, trades = 0, last = i0;
+  for (let i = i0; i < c.length && (!end || c[i][0] <= end); i++) {
+    const [t, o, , , cl] = c[i];
+    let fill = null;
+    if (!us) {
+      const d = decide({ ...s, open: o, close: cl, maUp: ma200Up(c, i, ma) });
+      fill = d.orders[0] || null;
+    } else {
+      const d = decide({ ...s, open: c[i - 1][1], close: c[i - 1][4], maUp: ma200Up(c, i - 1, ma) });
+      fill = d.orders.find(x => x.order === 'MOC' || (x.side === 'sell' && cl >= x.price) || (x.side === 'buy' && cl <= x.price)) || null;
+    }
+    if (fill) {
+      const before = s;
+      s = { ...s, ...applyFill(s, fill, cl) };
+      const ev = { t, side: fill.side, kind: fill.kind, qty: fill.qty, price: cl, amount: us ? r2(fill.qty * cl) : Math.round(fill.qty * cl), units: s.units, avg: fill.side === 'buy' ? s.avg : before.avg };
+      if (fill.side === 'sell') {
+        const pnl = s.account - before.account;
+        Object.assign(ev, { pnl: us ? r2(pnl) : Math.round(pnl), ret: pnl / (before.qty * before.avg) });
+        trades++; if (pnl > 0) wins++;
+      }
+      events.push(ev);
+    }
+    const v = s.account - s.qty * s.avg + s.qty * cl;
+    equity.push([t, us ? r2(v) : Math.round(v)]);
+    peak = Math.max(peak, v); mdd = Math.max(mdd, 1 - v / peak); last = i;
+  }
+  const endV = equity.at(-1)[1], yrs = Math.max((last - i0 + 1) / 248, 1 / 248);
+  return {
+    events, equity,
+    summary: { start: a0, end: endV, ret: endV / a0 - 1, cagr: (endV / a0) ** (1 / yrs) - 1, mdd, trades, wins, hold: c[last][4] / c[i0][4] - 1, from: c[i0][0], to: c[last][0] },
+    position: s.qty ? { qty: s.qty, avg: s.avg, units: s.units, account: s.account, ...levels(s.avg, us) } : null,
+  };
+}
+
 // "체결했어요" → 저장할 값. order: decide().orders 중 체결된 것 (decision을 넘기면 첫 주문)
 export function applyFill(p, order, fillPrice) {
   const o = order?.orders ? order.orders[0] : order;

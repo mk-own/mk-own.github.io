@@ -10,6 +10,7 @@ https://mk-own.github.io — PC와 휴대폰 브라우저에서 같은 데이터
 | `mk-own.github.io` (이 저장소) | 화면 코드만. 데이터 없음 | 공개 |
 | `my-data` | 암호화된 글자 데이터 (`vault.json`, `data/…`) | **비공개** |
 | `my-files-1`, `my-files-2`, … | 암호화된 첨부 파일. 900MB가 차면 다음 저장소를 자동으로 만든다 | **비공개** |
+| `my-prices` | 주가 일봉 (공개 시세만, 개인 정보 없음). GitHub Action이 하루 세 번 갱신 | **비공개** |
 
 - 데이터 키(무작위 256비트)로 모든 데이터와 파일을 AES-256-GCM 암호화한다.
   데이터 키는 비밀번호(PBKDF2-SHA256 60만 회)와 **복구 코드**로 각각 감싸서 `vault.json`에 둔다.
@@ -46,3 +47,5 @@ python -m http.server 8765
 | `js/idb.js` | 기기 저장 (IndexedDB) |
 | `js/bookmarks.js` | Chrome 즐겨찾기 읽기 |
 | `js/vendor/qrcode.js` | QR 코드 (qrcode-generator 1.4.4, MIT) |
+| `js/swing.js` | 음봉 단타 규칙 (오늘 할 일·체결 반영·시뮬레이션) |
+| `js/vendor/lightweight-charts.standalone.production.js` | 주가 차트 (TradingView Lightweight Charts 4.2.0, Apache-2.0, `lightweight-charts.LICENSE.txt`) |

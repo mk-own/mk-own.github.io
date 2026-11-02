@@ -2,7 +2,7 @@ import { legacyOpen } from './crypto.js';
 import { parseBookmarks, SEP } from './bookmarks.js';
 import { COLLECTIONS, SECTIONS, ASSET_KEYS, VIEWS, DAYS, num, whenText, isUS } from './schemas.js';
 import * as store from './store.js';
-import { decide, applyFill } from './swing.js';
+import { decide, applyFill, todayInputs, simulate, ma200Line } from './swing.js';
 
 const { S } = store;
 const LS = { prefs: 'hub.prefs', legacyCache: 'hub.cache', legacyPlain: 'hub.plain', legacyGh: 'hub.github' };
@@ -16,7 +16,7 @@ const ymd = (d = new Date()) => new Date(d - d.getTimezoneOffset() * 6e4).toISOS
 const daysUntil = s => Math.round((new Date(s) - new Date(ymd())) / 864e5);
 
 const items = k => S.data.items[k];
-const ui = { sort: {}, q: {}, folder: '', editLinks: false, fileMode: '', ttPerson: '', ttDay: '', libFolder: '', swing: {} };
+const ui = { sort: {}, q: {}, folder: '', editLinks: false, fileMode: '', ttPerson: '', ttDay: '', libFolder: '', swing: {}, chartId: '', sim: {}, simAll: false };
 
 // ---------- 표시 형식 ----------
 
@@ -557,6 +557,11 @@ function render() {
   else v.innerHTML = sectionHtml(s, tab);
   const sf = $('[data-sw-setup]');
   if (sf) planSum(sf);
+  if (chart && !$('#chart')) { chart.remove(); chart = null; }
+  if ($('.swing [data-sw]')) {
+    autofillSwing(items('stocks').filter(r => num(r.account) > 0)).catch(() => {});
+    drawChart().catch(e => { const o = $('#sim-out'); if (o) o.innerHTML = `<p class="err">${esc(e.message)}</p>`; });
+  }
 }
 
 addEventListener('hashchange', () => {
@@ -844,6 +849,7 @@ async function swingSetup(f) {
   S.data.sys.swingPlan = { total, fx: fx || '', rows };
   await store.changed('stocks', [...changed, ...dropped]);
   await store.changedSys();
+  syncTickers(rows);
   ui.swingEdit = false;
   render();
   toast('음봉 단타 종목을 넣었어요. 이미 갖고 있는 주식은 수량·평단을 넣어 두면 보유 칸을 자동으로 정해요.');
@@ -866,10 +872,191 @@ function swingHtml() {
           <label class="field"><span>${us ? '어젯밤 종가' : '예상체결가 (15:20)'}</span><input type="number" step="any" inputmode="decimal" data-sw-k="close" value="${esc(v.close ?? '')}"></label>
           <label class="check"><input type="checkbox" data-sw-k="maUp"${v.maUp ? ' checked' : ''}> 200일선 오르는 중</label>
         </div>
+        <p class="sw-auto muted small" data-sw-auto="${r.id}">${esc(v.autoNote || '')}</p>
         <div class="sw-result">${swingResultHtml(r)}</div>
       </div>`;
     }).join('')}
+  </section>
+  ${chartCardHtml(list)}`;
+}
+
+// ----- 주가 차트·시뮬레이션 -----
+// 가격은 비공개 저장소 my-prices의 prices/<코드>.json (GitHub Action이 하루 세 번 네이버 증권에서 받아 둠)
+
+const PRICE_REPO = 'my-prices';
+const priceCache = {}; // code → { at, p: Promise<data|null> }
+
+function loadPrices(code) {
+  const c = priceCache[code];
+  if (c && Date.now() - c.at < 10 * 60e3) return c.p;
+  const p = S.gh.getText(PRICE_REPO, `prices/${encodeURIComponent(code)}.json`)
+    .then(t => (t ? JSON.parse(t) : null))
+    .catch(() => null);
+  priceCache[code] = { at: Date.now(), p };
+  return p;
+}
+
+let chartLib = null;
+function loadChartLib() {
+  if (!chartLib) {
+    chartLib = new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'js/vendor/lightweight-charts.standalone.production.js'; // TradingView Lightweight Charts 4.2.0 (Apache-2.0)
+      s.onload = () => res(window.LightweightCharts);
+      s.onerror = () => { chartLib = null; rej(new Error('차트를 불러오지 못했어요.')); };
+      document.head.append(s);
+    });
+  }
+  return chartLib;
+}
+
+// 오늘 할 일 카드: 가격 자료로 시가·종가·200일선을 채운다 (사용자가 직접 넣은 값은 그대로)
+async function autofillSwing(list) {
+  for (const r of list) {
+    if (!r.code) continue;
+    const data = await loadPrices(r.code);
+    const box = $(`[data-sw="${r.id}"]`);
+    if (!data || !box) continue;
+    const ti = todayInputs(data);
+    const v = ui.swing[r.id];
+    if (!ti || (v && !v.auto)) continue;
+    const note = data.us
+      ? `어젯밤(${ti.date}) 봉으로 자동 입력 · 200일선 ${ti.maUp ? '오르는 중' : '내려가는 중'}`
+      : ti.close == null
+        ? `오늘 시가 자동 입력 · 200일선 ${ti.maUp ? '오르는 중' : '내려가는 중'} · 15:20 예상체결가만 넣으세요`
+        : `${ti.date} 봉으로 자동 입력 · 200일선 ${ti.maUp ? '오르는 중' : '내려가는 중'}${ti.today ? '' : ' · 오늘 봉은 아직 없어요'}`;
+    ui.swing[r.id] = { open: ti.open, close: ti.close ?? '', maUp: ti.maUp, auto: true, autoNote: note };
+    box.querySelector('[data-sw-k=open]').value = ti.open;
+    box.querySelector('[data-sw-k=close]').value = ti.close ?? '';
+    box.querySelector('[data-sw-k=maUp]').checked = ti.maUp;
+    box.querySelector('.sw-auto').textContent = note;
+    box.querySelector('.sw-result').innerHTML = swingResultHtml(r);
+  }
+}
+
+function chartCardHtml(list) {
+  const withCode = list.filter(r => r.code);
+  if (!withCode.length) return '';
+  if (!withCode.some(r => r.id === ui.chartId)) ui.chartId = withCode[0].id;
+  const r = withCode.find(x => x.id === ui.chartId), us = isUS(r);
+  const sim = ui.sim[r.id] || {};
+  return `<section class="card chart-card">
+    <h2>차트·시뮬레이션 <small class="muted">규칙대로 했다면</small></h2>
+    <div class="chip-row">${withCode.map(x => `<button type="button" class="chip ${x.id === r.id ? 'on' : ''}" data-act="ch-pick" data-id="${x.id}">${esc(x.name)}</button>`).join('')}</div>
+    <form class="sim-form" data-sim="${r.id}">
+      <label class="field"><span>금액 (${us ? '$' : '원'})</span><input name="amount" type="number" step="any" inputmode="decimal" value="${esc(sim.amount ?? num(r.account))}"></label>
+      <label class="field"><span>시작일 <small class="muted">(비우면 처음부터)</small></span><input name="start" type="date" value="${esc(sim.start || '')}"></label>
+      <button class="btn primary" type="submit">시뮬레이션</button>
+    </form>
+    <div class="chart-legend muted small"><span><i class="lg buy"></i>매수</span><span><i class="lg tp"></i>익절</span><span><i class="lg sl"></i>손절</span><span><i class="lg ma"></i>200일선</span></div>
+    <div id="chart" class="chart" aria-label="${esc(r.name)} 차트"></div>
+    <div id="sim-out"><p class="muted small">가격 자료를 불러오는 중…</p></div>
   </section>`;
+}
+
+let chart = null;
+const MA_COLOR = '#c28a00'; // 200일선 (익절·손절 색과 겹치지 않게)
+async function drawChart() {
+  const box = $('#chart'), out = $('#sim-out');
+  if (chart) { chart.remove(); chart = null; }
+  if (!box) return;
+  const r = items('stocks').find(x => x.id === ui.chartId);
+  if (!r) return;
+  const us = isUS(r), cur = us ? '$' : '';
+  const [LW, data] = await Promise.all([loadChartLib(), loadPrices(r.code)]);
+  if ($('#chart') !== box) return; // 그사이 화면이 바뀜
+  if (!data) {
+    box.hidden = true;
+    out.innerHTML = `<p class="muted small">${esc(r.name)}(${esc(r.code)}) 가격 자료가 아직 없어요. 가격 목록에 넣었으면 다음 자동 갱신 뒤에 보여요.</p>`;
+    return;
+  }
+  const sim = ui.sim[r.id] || {};
+  const res = simulate(data, { amount: sim.amount ?? num(r.account), start: sim.start || '' });
+
+  const css = getComputedStyle(document.documentElement);
+  const col = k => css.getPropertyValue(k).trim();
+  const up = col('--up'), down = col('--down');
+  chart = LW.createChart(box, {
+    autoSize: true,
+    layout: { background: { color: 'transparent' }, textColor: col('--text-2'), fontFamily: getComputedStyle(document.body).fontFamily },
+    grid: { vertLines: { color: col('--line') }, horzLines: { color: col('--line') } },
+    rightPriceScale: { borderColor: col('--line') },
+    timeScale: { borderColor: col('--line') },
+    localization: { locale: 'ko-KR', priceFormatter: v => (us ? `$${v.toFixed(2)}` : Math.round(v).toLocaleString('ko-KR')) },
+  });
+  const candles = chart.addCandlestickSeries({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
+  candles.setData(data.c.map(([time, open, high, low, close]) => ({ time, open, high, low, close })));
+  const ma = ma200Line(data.c);
+  chart.addLineSeries({ color: MA_COLOR, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+    .setData(data.c.map((k, i) => (ma[i] == null ? null : { time: k[0], value: ma[i] })).filter(Boolean));
+  candles.setMarkers(res.events.map(e => ({
+    time: e.t,
+    position: e.side === 'buy' ? 'belowBar' : 'aboveBar',
+    shape: e.side === 'buy' ? 'arrowUp' : 'arrowDown',
+    color: e.kind === 'buy' ? col('--accent') : e.kind === 'tp' ? up : col('--text-2'),
+    text: e.kind === 'tp' ? '익절' : e.kind === 'sl' ? '손절' : '',
+  })));
+  // 지금 실제로 갖고 있으면 평단·익절가·손절가 선
+  if (num(r.qty) > 0 && num(r.avg) > 0) {
+    const a = num(r.avg);
+    candles.createPriceLine({ price: a, color: col('--text-2'), lineStyle: 2, lineWidth: 1, title: '평단' });
+    candles.createPriceLine({ price: a * 1.05, color: up, lineStyle: 2, lineWidth: 1, title: '익절' });
+    candles.createPriceLine({ price: a * 0.85, color: down, lineStyle: 2, lineWidth: 1, title: '손절' });
+  }
+  const last = data.c.at(-1)[0];
+  const from = new Date(new Date(last) - 365 * 864e5).toISOString().slice(0, 10);
+  chart.timeScale().setVisibleRange({ from: sim.start && sim.start > from ? sim.start : from, to: last });
+
+  out.innerHTML = simResultHtml(r, res, data);
+}
+
+const pct = v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+
+function simResultHtml(r, res, data) {
+  const cur = isUS(r) ? '$' : '';
+  const sm = res.summary;
+  if (!sm) return '<p class="muted small">이 기간에는 시뮬레이션할 자료가 없어요. 시작일을 앞으로 당겨 보세요.</p>';
+  const kind = { buy: '매수', tp: '익절', sl: '손절' };
+  const ev = [...res.events].reverse();
+  const shown = ui.simAll ? ev : ev.slice(0, 30);
+  const pos = res.position;
+  return `
+    <div class="sim-sum">
+      <div><span>기간</span><b>${sm.from} ~ ${sm.to}</b></div>
+      <div><span>시작 → 끝</span><b>${fmtMoney(sm.start, cur)} → ${fmtMoney(sm.end, cur)}</b></div>
+      <div><span>수익률</span><b class="${sm.ret >= 0 ? 'up' : 'down'}">${pct(sm.ret)}</b></div>
+      <div><span>1년 평균</span><b class="${sm.cagr >= 0 ? 'up' : 'down'}">${pct(sm.cagr)}</b></div>
+      <div><span>가장 크게 빠졌을 때</span><b class="down">-${(sm.mdd * 100).toFixed(1)}%</b></div>
+      <div><span>판 횟수 (이익)</span><b>${sm.trades}번 (${sm.wins}번)</b></div>
+      <div><span>그냥 들고 있었다면</span><b class="${sm.hold >= 0 ? 'up' : 'down'}">${pct(sm.hold)}</b></div>
+      ${pos ? `<div><span>끝날 때 보유</span><b>${fmtNum(pos.qty)}주 · ${pos.units}/5칸 · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
+    </div>
+    <p class="muted small">가격 기준 ${esc((data.updated || '').replace('T', ' ').slice(0, 16))} · 수수료·세금 포함 · 과거 결과이고 앞으로도 같다는 뜻은 아니에요</p>
+    ${ev.length ? `<div class="table-wrap"><table class="sim-table">
+      <thead><tr><th>날짜</th><th>구분</th><th class="num">주식 수</th><th class="num">가격</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
+      <tbody>${shown.map(e => `<tr>
+        <td>${e.t}</td><td><span class="kind ${e.kind}">${kind[e.kind]}</span></td>
+        <td class="num">${fmtNum(e.qty)}</td><td class="num">${fmtMoney(e.price, cur)}</td><td class="num">${fmtMoney(e.amount, cur)}</td>
+        <td class="num">${e.pnl == null ? '' : `<span class="${e.pnl >= 0 ? 'up' : 'down'}">${e.pnl >= 0 ? '+' : ''}${fmtMoney(e.pnl, cur)} (${pct(e.ret)})</span>`}</td>
+      </tr>`).join('')}</tbody></table></div>
+      ${ev.length > 30 ? `<div class="row"><button type="button" class="btn small" data-act="sim-all">${ui.simAll ? '최근 30개만' : `모두 보기 (${ev.length}개)`}</button></div>` : ''}`
+    : '<p class="muted small">이 기간에는 사고판 적이 없어요.</p>'}`;
+}
+
+// 종목을 넣거나 바꾸면 가격 받을 목록(my-prices/tickers.json)에도 넣는다
+async function syncTickers(rows) {
+  try {
+    const text = await S.gh.getText(PRICE_REPO, 'tickers.json');
+    if (text == null) return;
+    const list = JSON.parse(text);
+    const add = rows.filter(x => x.code && !list.some(t => t.code === x.code)).map(x => ({ code: x.code, name: x.name }));
+    if (!add.length) return;
+    const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify([...list, ...add], null, 2) + '\n')));
+    await S.gh.put(PRICE_REPO, 'tickers.json', b64, await S.gh.sha(PRICE_REPO, 'tickers.json'), 'tickers');
+    for (const x of add) delete priceCache[x.code];
+  } catch (e) {
+    toast(`가격 목록에 종목을 넣지 못했어요: ${e.message}`, true);
+  }
 }
 
 async function swingFill(id, i) {
@@ -1194,6 +1381,8 @@ view.addEventListener('click', e => {
     case 'lib-upload': pickFile(el.dataset.dir ? 'lib-dir' : 'lib'); break;
     case 'settings': openSettings(); break;
     case 'sw-edit': ui.swingEdit = !ui.swingEdit; render(); break;
+    case 'ch-pick': ui.chartId = id; ui.simAll = false; render(); break;
+    case 'sim-all': ui.simAll = !ui.simAll; drawChart().catch(err => toast(err.message, true)); break;
     case 'sw-row-add': {
       const box = el.closest('form').querySelector('.sw-rows');
       box.insertAdjacentHTML('beforeend', planRowHtml());
@@ -1216,11 +1405,19 @@ function swingInput(e) {
   const k = e.target.dataset.swK, box = e.target.closest('[data-sw]');
   if (!k || !box) return;
   const id = box.dataset.sw;
-  ui.swing[id] = { ...(ui.swing[id] || {}), [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value };
+  ui.swing[id] = { ...(ui.swing[id] || {}), [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value, auto: false };
   box.querySelector('.sw-result').innerHTML = swingResultHtml(items('stocks').find(r => r.id === id));
 }
 view.addEventListener('input', swingInput);
 view.addEventListener('submit', e => {
+  const sf = e.target.closest('[data-sim]');
+  if (sf) {
+    e.preventDefault();
+    ui.sim[sf.dataset.sim] = { amount: num(sf.amount.value) || undefined, start: sf.start.value };
+    ui.simAll = false;
+    drawChart().catch(err => toast(err.message, true));
+    return;
+  }
   if (!e.target.matches('[data-sw-setup]')) return;
   e.preventDefault();
   swingSetup(e.target).catch(err => toast(err.message, true));
