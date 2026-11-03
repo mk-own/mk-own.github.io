@@ -550,14 +550,14 @@ html, body { overscroll-behavior-y: contain; }
 .chart { height: 360px; width: 100%; margin: 6px 0 12px; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .chart-legend .lg { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-.lg.buy { background: var(--accent); } .lg.tp { background: var(--up); } .lg.sl { background: var(--text-2); } .lg.ma { background: #c28a00; height: 3px; vertical-align: 2px; }
+.lg.buy { background: #12a150; } .lg.tp { background: #f08c00; } .lg.sl { background: #8b5cf6; } .lg.ma { background: #c28a00; height: 3px; vertical-align: 2px; }
 .sim-sum { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin-bottom: 8px; }
 .sim-sum > div { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; display: grid; gap: 2px; }
 .sim-sum span { font-size: 12px; color: var(--text-2); }
 .sim-sum b { font-size: 14px; }
 .sim-table td, .sim-table th { white-space: nowrap; }
 .kind { font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); }
-.kind.buy { color: var(--accent); } .kind.tp { color: var(--up); } .kind.sl { color: var(--text-2); }
+.kind.buy { color: #12a150; } .kind.tp { color: #e07b00; } .kind.sl { color: #8b5cf6; }
 @media (max-width: 560px) { .chart { height: 280px; } .sim-sum { grid-template-columns: 1fr 1fr; } }
 
 .sw-rules { margin: 0 0 4px; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; color: var(--text-2); }

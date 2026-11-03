@@ -1090,6 +1090,8 @@ function tickMD(t, type) {
 
 let chart = null;
 const MA_COLOR = '#c28a00'; // 200일선 (익절·손절 색과 겹치지 않게)
+// 매수·익절·손절 표시: 봉 색(빨강·파랑)과 안 겹치게. style.css의 .lg / .kind와 같은 색
+const MARK = { buy: '#12a150', tp: '#f08c00', sl: '#8b5cf6' };
 async function drawChart() {
   const box = $('#chart'), out = $('#sim-out');
   if (chart) { chart.remove(); chart = null; }
@@ -1132,7 +1134,8 @@ async function drawChart() {
     time: e.t,
     position: e.side === 'buy' ? 'belowBar' : 'aboveBar',
     shape: e.side === 'buy' ? 'arrowUp' : 'arrowDown',
-    color: e.kind === 'buy' ? col('--accent') : e.kind === 'tp' ? up : col('--text-2'),
+    color: MARK[e.kind],
+    size: 1.6,
     text: e.kind === 'tp' ? '익절' : e.kind === 'sl' ? '손절' : '',
   })));
   // 지금 실제로 갖고 있으면 평단·익절가·손절가 선
