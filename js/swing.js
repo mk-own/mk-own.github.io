@@ -42,7 +42,7 @@ export function decide(p) {
   const held = qty > 0 && avg > 0, { tp, sl } = levels(avg, us);
   const k = Math.min(2, N - units), bear = close < open;
   const canBuy = maUp && bear && k > 0;
-  const why = !maUp ? '200일선이 내려가는 중이라 새로 사지 않음' : !bear ? '양봉이라 쉼' : '5칸이 다 차서 더 사지 않음';
+  const why = !maUp ? '200일선이 내려가는 중이라 새로 사지 않음' : !bear ? '양봉이라 쉼' : '투자금을 다 써서(100%) 더 사지 않음';
   const keep = held ? ` · 익절 ${money(tp, us)} 이상 / 손절 ${money(sl, us)} 이하` : '';
 
   if (!us) {
@@ -52,7 +52,7 @@ export function decide(p) {
     if (canBuy) {
       const q = buyQty(account, units, qty, avg, close, k);
       if (q < 1) return none(`음봉이지만 현금이 모자라 살 수 없음${keep}`);
-      return { action: 'buy', qty: q, price: null, order: ord, units: k, text: `음봉: 15:20 동시호가로 ${q}주 매수 (${k}칸 → ${units + k}/${N}칸)`, orders: [{ side: 'buy', kind: 'buy', qty: q, price: null, order: ord, units: k }] };
+      return { action: 'buy', qty: q, price: null, order: ord, units: k, text: `음봉: 15:20 동시호가로 ${q}주 매수 (투자금의 ${k * 100 / N}%어치 → 합계 ${(units + k) * 100 / N}%)`, orders: [{ side: 'buy', kind: 'buy', qty: q, price: null, order: ord, units: k }] };
     }
     return none(`할 일 없음 · ${why}${keep}`);
   }
@@ -69,7 +69,7 @@ export function decide(p) {
     if (q >= 1) orders.push({ side: 'buy', kind: 'buy', qty: q, price: limit, order: 'LOC', units: k });
   }
   if (!orders.length) return none(`할 일 없음 · ${canBuy ? '현금이 모자라 살 수 없음' : why}`);
-  const line = o => o.side === 'sell' ? `${o.qty}주 LOC 매도 ${money(o.price, true)}` : `${o.qty}주 LOC 매수 ${money(o.price, true)}까지 (${o.units}칸 → ${units + o.units}/${N}칸)`;
+  const line = o => o.side === 'sell' ? `${o.qty}주 LOC 매도 ${money(o.price, true)}` : `${o.qty}주 LOC 매수 ${money(o.price, true)}까지 (투자금의 ${o.units * 100 / N}%어치 → 합계 ${(units + o.units) * 100 / N}%)`;
   const first = orders.find(o => o.side === 'buy') || orders[0];
   return {
     action: first.kind, qty: first.qty, price: first.price, order: 'LOC', units: first.units,
