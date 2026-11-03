@@ -558,10 +558,8 @@ function render() {
   const sf = $('[data-sw-setup]');
   if (sf) planSum(sf);
   if (chart && !$('#chart')) { chart.remove(); chart = null; }
-  if ($('.swing [data-sw]')) {
-    autofillSwing(items('stocks').filter(r => num(r.account) > 0)).catch(() => {});
-    drawChart().catch(e => { const o = $('#sim-out'); if (o) o.innerHTML = `<p class="err">${esc(e.message)}</p>`; });
-  }
+  if ($('.swing [data-sw]')) autofillSwing(items('stocks').filter(r => num(r.account) > 0)).catch(() => {});
+  if ($('#chart')) drawChart().catch(e => { const o = $('#sim-out'); if (o) o.innerHTML = `<p class="err">${esc(e.message)}</p>`; });
 }
 
 addEventListener('hashchange', () => {
@@ -857,7 +855,8 @@ async function swingSetup(f) {
 
 function swingHtml() {
   const list = items('stocks').filter(r => num(r.account) > 0);
-  if (!list.length || ui.swingEdit) return swingSetupHtml(list.length > 0);
+  if (ui.swingEdit) return swingSetupHtml(true) + chartCardHtml(list);
+  if (!list.length) return swingSetupHtml(false) + chartCardHtml(planChartRows());
   return `<section class="card swing">
     <h2>오늘 할 일 <small class="muted">음봉 단타</small>
       <button type="button" class="btn small sw-edit" data-act="sw-edit">종목·비율 바꾸기</button></h2>
@@ -934,8 +933,19 @@ async function autofillSwing(list) {
   }
 }
 
+// 아직 종목을 넣기 전: 계획(기본값이나 저장해 둔 값)의 종목으로 차트·시뮬레이션만 미리 본다
+function planChartRows() {
+  const plan = swingPlan(), fx = num(plan.fx);
+  return plan.rows.filter(x => x.code).map(x => {
+    const won = num(plan.total) * num(x.pct) / 100;
+    return { id: 'plan-' + x.code, name: x.name, code: x.code, account: isUS(x) ? (fx ? Math.round(won / fx * 100) / 100 : 10000) : Math.round(won) };
+  });
+}
+
+let chartRows = []; // 지금 차트 카드에 나온 종목들
 function chartCardHtml(list) {
   const withCode = list.filter(r => r.code);
+  chartRows = withCode;
   if (!withCode.length) return '';
   if (!withCode.some(r => r.id === ui.chartId)) ui.chartId = withCode[0].id;
   const r = withCode.find(x => x.id === ui.chartId), us = isUS(r);
@@ -960,14 +970,19 @@ async function drawChart() {
   const box = $('#chart'), out = $('#sim-out');
   if (chart) { chart.remove(); chart = null; }
   if (!box) return;
-  const r = items('stocks').find(x => x.id === ui.chartId);
+  const r = chartRows.find(x => x.id === ui.chartId);
   if (!r) return;
   const us = isUS(r), cur = us ? '$' : '';
   const [LW, data] = await Promise.all([loadChartLib(), loadPrices(r.code)]);
   if ($('#chart') !== box) return; // 그사이 화면이 바뀜
   if (!data) {
     box.hidden = true;
-    out.innerHTML = `<p class="muted small">${esc(r.name)}(${esc(r.code)}) 가격 자료가 아직 없어요. 가격 목록에 넣었으면 다음 자동 갱신 뒤에 보여요.</p>`;
+    // tickers.json도 못 읽으면 토큰이 my-prices 저장소를 볼 수 없는 것
+    const seen = await S.gh.getText(PRICE_REPO, 'tickers.json').catch(() => null);
+    out.innerHTML = seen == null
+      ? `<p class="err">가격 자료(비공개 저장소 ${PRICE_REPO})를 읽지 못했어요. GitHub 토큰이 이 저장소를 볼 수 없는 것 같아요.</p>
+         <p class="muted small">GitHub → Settings → Developer settings → Fine-grained tokens → 지금 쓰는 토큰 → <b>Repository access</b>를 <b>All repositories</b>로 바꾸거나 ${PRICE_REPO}를 추가하고, <b>Contents</b> 권한을 <b>Read and write</b>로 두세요. 토큰 문자열은 그대로라 사이트에서 바꿀 것은 없어요.</p>`
+      : `<p class="muted small">${esc(r.name)}(${esc(r.code)}) 가격 자료가 아직 없어요. 가격 목록에 넣었으면 다음 자동 갱신 뒤에 보여요.</p>`;
     return;
   }
   const sim = ui.sim[r.id] || {};
