@@ -570,3 +570,4 @@ html, body { overscroll-behavior-y: contain; }
 .chart-card .chip { font-size: 15px; height: 38px; padding: 0 18px; border-radius: 19px; border: 1.5px solid var(--text-2); color: var(--text); }
 .chart-card .chip.on { border-color: var(--text); color: var(--bg); }
 .sim-sum span small { font-size: 11px; opacity: .8; }
+.chart-how { margin: 2px 0 6px; }

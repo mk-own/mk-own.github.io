@@ -1068,6 +1068,7 @@ function chartCardHtml(list) {
       <button class="btn primary" type="submit">적용</button>
     </form>
     <div class="chart-legend muted small"><span><i class="lg buy"></i>매수</span><span><i class="lg tp"></i>익절</span><span><i class="lg sl"></i>손절</span><span><i class="lg ma"></i>200일선</span></div>
+    <p class="muted small chart-how">화살표 날 = 주문하는 날 · ${us ? '그날 20:00에 LOC(손절은 MOC)로 주문 → 다음날 새벽 장 마감에 체결' : '그날 15:20 예상체결가를 보고 동시호가로 주문 → 15:30 체결'}</p>
     <div id="chart" class="chart" aria-label="${esc(r.name)} 차트"></div>
     <div id="sim-out"><p class="muted small">가격 자료를 불러오는 중…</p></div>
   </section>`;
@@ -1152,21 +1153,23 @@ async function drawChart() {
   out.innerHTML = simResultHtml(r, res, data, sim.amount);
 }
 
-// 기간 = 시작일 뒤 처음 산 날 ~ 마지막 날. 수익률 = 판 것만 (실현 손익 ÷ 금액).
-// 그냥 들고 있었다면 = 같은 기간에 처음 산 날 종가로 사서 들고 있었을 때
+// 기간 = 시작일 뒤 처음 산 날 ~ 마지막 날. 실제 매매 수익 = 판 것만 (실현 손익, ÷ 금액 = %).
+// 그냥 보유 = 같은 기간에 처음 산 날 종가로 사서 들고 있었을 때
 function periodOf(res, data, amount) {
   const first = res.events.find(e => e.side === 'buy');
   if (!first) return null;
   const to = res.summary.to;
   const realized = res.events.reduce((a, e) => a + (e.pnl || 0), 0);
   const end = data.c.findLast(k => k[0] <= to)[4];
-  return { from: first.t, to, ret: realized / amount, sold: res.events.some(e => e.side === 'sell'), hold: end / first.price - 1 };
+  return { from: first.t, to, realized, ret: realized / amount, sold: res.events.some(e => e.side === 'sell'), hold: end / first.price - 1 };
 }
 
 const pct = v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
 
 function simResultHtml(r, res, data, amount) {
   const cur = isUS(r) ? '$' : '';
+  // 그날 언제·어떻게 주문하는지 (swing.js decide와 같은 방식)
+  const how = e => (!isUS(r) ? '15:20 동시호가' : e.kind === 'sl' ? '20:00 MOC 매도' : `20:00 LOC ${e.side === 'buy' ? '매수' : '매도'}`);
   const sm = res.summary;
   if (!sm) return '<p class="muted small">이 기간에는 자료가 없어요. 시작일을 앞으로 당겨 보세요.</p>';
   const pd = periodOf(res, data, num(amount));
@@ -1177,14 +1180,14 @@ function simResultHtml(r, res, data, amount) {
   return `
     ${pd ? `<div class="sim-sum">
       <div><span>기간 <small>처음 산 날부터</small></span><b>${pd.from} ~ ${pd.to}</b></div>
-      <div><span>수익률 <small>판 것만</small></span>${pd.sold ? `<b class="${pd.ret >= 0 ? 'up' : 'down'}">${pct(pd.ret)}</b>` : '<b class="muted">아직 안 팖</b>'}</div>
-      <div><span>그냥 들고 있었다면</span><b class="${pd.hold >= 0 ? 'up' : 'down'}">${pct(pd.hold)}</b></div>
+      <div><span>실제 매매 수익</span>${pd.sold ? `<b class="${pd.ret >= 0 ? 'up' : 'down'}">${pd.realized >= 0 ? '+' : ''}${fmtMoney(pd.realized, cur)} (${pct(pd.ret)})</b>` : '<b class="muted">아직 안 팖</b>'}</div>
+      <div><span>그냥 보유</span><b class="${pd.hold >= 0 ? 'up' : 'down'}">${pct(pd.hold)}</b></div>
       ${pos ? `<div><span>지금 보유</span><b>${fmtNum(pos.qty)}주 · 투자금의 ${pos.units * 20}% · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
     </div>` : `<p class="muted small">${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).</p>`}
     ${ev.length ? `<div class="table-wrap"><table class="sim-table">
-      <thead><tr><th>날짜</th><th>구분</th><th class="num">주식 수</th><th class="num">가격</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
+      <thead><tr><th>날짜</th><th>구분</th><th>주문</th><th class="num">주식 수</th><th class="num">가격</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
       <tbody>${shown.map(e => `<tr>
-        <td>${e.t}</td><td><span class="kind ${e.kind}">${kind[e.kind]}</span></td>
+        <td>${e.t}</td><td><span class="kind ${e.kind}">${kind[e.kind]}</span></td><td class="muted small">${how(e)}</td>
         <td class="num">${fmtNum(e.qty)}</td><td class="num">${fmtMoney(e.price, cur)}</td><td class="num">${fmtMoney(e.amount, cur)}</td>
         <td class="num">${e.pnl == null ? '' : `<span class="${e.pnl >= 0 ? 'up' : 'down'}">${e.pnl >= 0 ? '+' : ''}${fmtMoney(e.pnl, cur)} (${pct(e.ret)})</span>`}</td>
       </tr>`).join('')}</tbody></table></div>
