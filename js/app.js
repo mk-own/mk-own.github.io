@@ -752,7 +752,7 @@ const SWING_PLAN = [
 ];
 const swingPlan = () => S.data.sys.swingPlan || { total: 20000000, fx: '', rows: SWING_PLAN };
 
-// 금액 입력 팝업의 한 줄: 종목명과 비율만. 코드는 이름으로 찾아 data-code에 둔다
+// 종목별 비율 입력 팝업의 한 줄: 종목명과 비율만. 코드는 이름으로 찾아 data-code에 둔다
 const planRowHtml = (x = {}) => `<div class="sw-row" data-code="${esc(x.code ?? '')}">
   <input name="pname" list="stock-names" placeholder="종목명 (예: SK하이닉스, QQQ)" value="${esc(x.name ?? '')}" aria-label="종목명" autocomplete="off">
   <span class="sw-pct"><input name="ppct" type="number" step="any" inputmode="decimal" value="${esc(x.pct ?? '')}" aria-label="비율"> %</span>
@@ -804,13 +804,33 @@ async function showCode(row) {
   el.classList.toggle('bad', !f.code && !!f.label);
 }
 
+// 현재 원/달러 환율: my-prices의 prices/fx.json (하나은행 매매기준율, 가격과 같이 하루 세 번 갱신). 없으면 null
+async function loadFx() {
+  try {
+    const j = JSON.parse(await S.gh.getText(PRICE_REPO, 'prices/fx.json'));
+    const rate = num(j?.USDKRW);
+    return rate ? { rate: Math.round(rate * 100) / 100, date: j.date || String(j.updated || '').slice(0, 10) } : null;
+  } catch { return null; }
+}
+
+// 입력하면서 세 자리마다 콤마. 커서는 앞에 있던 숫자 개수로 제자리에 둔다
+function commaInput(inp) {
+  const pos = inp.selectionStart ?? inp.value.length;
+  const before = inp.value.slice(0, pos).replace(/\D/g, '').length;
+  const digits = inp.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+  inp.value = digits ? Number(digits).toLocaleString('ko-KR') : '';
+  let i = 0;
+  for (let seen = 0; i < inp.value.length && seen < before; i++) if (/\d/.test(inp.value[i])) seen++;
+  inp.setSelectionRange(i, i);
+}
+
 function openSwingPlan() {
   const plan = swingPlan();
   mform.innerHTML = `
-    <h2>금액 입력 <small class="muted">음봉 단타</small></h2>
+    <h2>종목별 비율 입력 <small class="muted">음봉 단타</small></h2>
     <div class="fields">
-      <label class="field"><span>전체 금액 (원)</span><input name="total" type="number" step="any" inputmode="numeric" value="${esc(plan.total)}" required></label>
-      <label class="field"><span>환율 (원/$) <small class="muted">해외 종목이 있을 때</small></span><input name="fx" type="number" step="any" inputmode="decimal" placeholder="예: 1400" value="${esc(plan.fx)}"></label>
+      <label class="field"><span>전체 금액 (원)</span><input name="total" type="text" inputmode="numeric" value="${esc(num(plan.total) ? num(plan.total).toLocaleString('ko-KR') : '')}" required></label>
+      <label class="field"><span>환율 (원/$) <small class="muted" id="fx-note">현재 환율 찾는 중…</small></span><input name="fx" type="number" step="any" inputmode="decimal" placeholder="예: 1400" value="${esc(plan.fx)}"></label>
     </div>
     <div class="sw-rows">${plan.rows.map(planRowHtml).join('')}</div>
     <datalist id="stock-names"></datalist>
@@ -828,7 +848,16 @@ function openSwingPlan() {
     const dl = mform.querySelector('#stock-names');
     if (dl) dl.innerHTML = [...m.values()].map(([n]) => `<option value="${esc(n)}">`).join('');
   });
+  loadFx().then(fx => {
+    const note = mform.querySelector('#fx-note');
+    if (!note) return;
+    if (!fx) { note.textContent = '자동으로 못 찾았어요 · 직접 넣어주세요'; return; }
+    mform.fx.value = fx.rate;
+    note.textContent = `현재 환율 (${fx.date} 기준, 자동)`;
+  });
   mform.oninput = e => {
+    if (e.target.name === 'total') commaInput(e.target);
+    if (e.target.name === 'fx') mform.querySelector('#fx-note').textContent = '직접 넣은 값';
     if (e.target.name === 'ppct') planSum(mform);
     if (e.target.name === 'pname') showCode(e.target.closest('.sw-row'));
   };
@@ -897,18 +926,18 @@ async function swingSetup(f) {
 }
 
 const SWING_RULES = `<ul class="sw-rules">
-  <li><b>사기</b> 200일선이 오르는 중 + 음봉(종가 &lt; 시가) → 2칸, 최대 5칸</li>
+  <li><b>사기</b> 200일선이 20일 전보다 높음 + 음봉(종가 &lt; 시가) → 2칸 (1칸만 남으면 1칸), 최대 5칸</li>
   <li><b>팔기</b> 종가가 평단 +5% 이상 → 전부 익절 · −15% 이하 → 전부 손절 · 판 날은 안 삼</li>
   <li><b>1칸</b> 계좌 금액 ÷ 5 (다 팔면 다시 계산)</li>
-  <li><b>주문</b> 국내 15:20 동시호가 · 미국 아침에 확인하고 20:00 LOC</li>
+  <li><b>주문</b> 국내 15:20 예상체결가로 판단, 동시호가 주문 · 미국 아침에 어젯밤 봉 확인 → 20:00 LOC (손절은 MOC)</li>
 </ul>`;
 
 function swingHtml() {
   const list = items('stocks').filter(r => num(r.account) > 0);
   return `<section class="card swing">
-    <h2>음봉 단타 <button type="button" class="btn small primary sw-edit" data-act="sw-plan">금액 입력</button></h2>
+    <h2>음봉 단타 <button type="button" class="btn small primary sw-edit" data-act="sw-plan">종목별 비율 입력</button></h2>
     ${SWING_RULES}
-    ${list.length ? '' : '<p class="muted small sw-start">금액 입력을 눌러 전체 금액과 종목별 비율을 넣으면 오늘 할 일이 여기 나와요.</p>'}
+    ${list.length ? '' : '<p class="muted small sw-start">종목별 비율 입력을 눌러 전체 금액과 비율을 넣으면 오늘 할 일이 여기 나와요.</p>'}
     ${list.map(r => {
       const us = isUS(r), v = ui.swing[r.id] || {}, cur = us ? '$' : '';
       const units = Math.round(num(r.units));

@@ -48,5 +48,5 @@ python -m http.server 8765
 | `js/bookmarks.js` | Chrome 즐겨찾기 읽기 |
 | `js/vendor/qrcode.js` | QR 코드 (qrcode-generator 1.4.4, MIT) |
 | `js/swing.js` | 음봉 단타 규칙 (오늘 할 일·체결 반영·시뮬레이션) |
-| `js/data/krx.json` | 국내 상장 종목 이름 → 코드 (KRX 상장법인 목록 + 네이버 ETF 목록, 2026-11-03 기준). 금액 입력에서 이름만 넣으면 코드를 찾는 데 씀 |
+| `js/data/krx.json` | 국내 상장 종목 이름 → 코드 (KRX 상장법인 목록 + 네이버 ETF 목록, 2026-11-03 기준). 종목별 비율 입력에서 이름만 넣으면 코드를 찾는 데 씀 |
 | `js/vendor/lightweight-charts.standalone.production.js` | 주가 차트 (TradingView Lightweight Charts 4.2.0, Apache-2.0, `lightweight-charts.LICENSE.txt`) |
