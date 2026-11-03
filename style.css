@@ -493,15 +493,15 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .sw-text.sl { color: var(--down); }
 .swing h2 .sw-edit { float: right; font-weight: 400; }
 .sw-rows { display: grid; gap: 8px; margin: 12px 0 8px; }
-.sw-row { display: grid; grid-template-columns: 1.2fr 1fr 110px auto; gap: 8px; align-items: center; }
+.sw-row { display: grid; grid-template-columns: 1fr 110px auto; gap: 4px 8px; align-items: center; }
+.sw-code { grid-column: 1 / -1; min-height: 1em; }
+.sw-code.bad { color: var(--danger); }
 .sw-row input { min-width: 0; }
 .sw-pct { display: flex; align-items: center; gap: 4px; }
 .sw-pct input { width: 100%; }
 .sw-sum.bad { color: var(--danger); font-weight: 600; }
 @media (max-width: 560px) {
-  .sw-row { grid-template-columns: 1fr 1fr; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
-  .sw-row .sw-pct { grid-column: 1; }
-  .sw-row [data-act=sw-row-del] { justify-self: end; }
+  .sw-row { grid-template-columns: 1fr 84px auto; }
 }
 
 /* 패턴 */
@@ -556,3 +556,8 @@ html, body { overscroll-behavior-y: contain; }
 .kind { font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); }
 .kind.buy { color: var(--accent); } .kind.tp { color: var(--up); } .kind.sl { color: var(--text-2); }
 @media (max-width: 560px) { .chart { height: 280px; } .sim-sum { grid-template-columns: 1fr 1fr; } }
+
+.sw-rules { margin: 0 0 4px; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; color: var(--text-2); }
+.sw-rules b { color: var(--text); margin-right: 4px; }
+.sw-start { margin: 10px 0 0; }
+.swing .sw-rules + .sw-item { border-top: 1px solid var(--line); margin-top: 8px; }
