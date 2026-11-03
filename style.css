@@ -571,3 +571,19 @@ html, body { overscroll-behavior-y: contain; }
 .chart-card .chip.on { border-color: var(--text); color: var(--bg); }
 .sim-sum span small { font-size: 11px; opacity: .8; }
 .chart-how { margin: 2px 0 6px; }
+
+/* 실제 매매 기록 줄 */
+.sim-table tbody tr[data-act] { cursor: pointer; }
+.sim-table tbody tr[data-act]:hover { background: var(--surface-2); }
+.sim-table tr.real { background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 600; }
+.sim-table tr.real td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.real-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; background: var(--accent); color: #fff; vertical-align: 1px; }
+.trade-calc { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 4px; font-size: 14px; }
+.trade-calc dt { color: var(--text-2); }
+.trade-calc dd { margin: 0; font-weight: 600; }
+/* 휴대폰 가로: 위 메뉴를 고정하지 않고 차트를 화면 높이에 맞춤 */
+@media (orientation: landscape) and (max-height: 500px) {
+  .topbar { position: static; }
+  .chart { height: calc(100dvh - 16px); min-height: 220px; }
+}
+.sim-virt { margin: 4px 0 8px; }

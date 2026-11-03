@@ -907,6 +907,7 @@ function openSwingPlan() {
     e.preventDefault();
     swingSetup(mform).then(ok => { if (ok) modal.close(); }).catch(err => toast(err.message, true));
   };
+  modal.addEventListener('close', resetModalHandlers, { once: true });
   if (!modal.open) modal.showModal();
 }
 
@@ -1089,6 +1090,9 @@ function tickMD(t, type) {
   return type === 0 ? `${y}년 ${m}/${d}` : `${m}/${d}`;
 }
 
+const LANDSCAPE = matchMedia('(orientation: landscape) and (max-height: 500px)');
+LANDSCAPE.addEventListener('change', e => { if (e.matches) setTimeout(() => $('#chart')?.scrollIntoView({ block: 'start' }), 300); });
+
 let chart = null;
 const MA_COLOR = '#c28a00'; // 200일선 (익절·손절 색과 겹치지 않게)
 // 매수·익절·손절 표시: 봉 색(빨강·파랑)과 안 겹치게. style.css의 .lg / .kind와 같은 색
@@ -1114,6 +1118,8 @@ async function drawChart() {
   }
   const sim = simOf(r);
   const res = simulate(data, { amount: sim.amount, start: sim.start || '' });
+  const rows = tradeRows(r, res, sim.start);
+  simLast = { id: r.id, res };
 
   const css = getComputedStyle(document.documentElement);
   const col = k => css.getPropertyValue(k).trim();
@@ -1131,13 +1137,13 @@ async function drawChart() {
   const ma = ma200Line(data.c);
   chart.addLineSeries({ color: MA_COLOR, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
     .setData(data.c.map((k, i) => (ma[i] == null ? null : { time: k[0], value: ma[i] })).filter(Boolean));
-  candles.setMarkers(res.events.map(e => ({
+  candles.setMarkers(rows.map(e => ({
     time: e.t,
     position: e.side === 'buy' ? 'belowBar' : 'aboveBar',
-    shape: e.side === 'buy' ? 'arrowUp' : 'arrowDown',
+    shape: e.real ? 'circle' : e.side === 'buy' ? 'arrowUp' : 'arrowDown',
     color: MARK[e.kind],
     size: 1.6,
-    text: e.kind === 'tp' ? '익절' : e.kind === 'sl' ? '손절' : '',
+    text: e.real ? `실제 ${KIND[e.kind]}` : e.kind === 'tp' ? '익절' : e.kind === 'sl' ? '손절' : '',
   })));
   // 지금 실제로 갖고 있으면 평단·익절가·손절가 선
   if (num(r.qty) > 0 && num(r.avg) > 0) {
@@ -1150,31 +1156,142 @@ async function drawChart() {
   const from = new Date(new Date(last) - 365 * 864e5).toISOString().slice(0, 10);
   chart.timeScale().setVisibleRange({ from: sim.start && sim.start > from ? sim.start : from, to: last });
 
-  out.innerHTML = simResultHtml(r, res, data, sim.amount);
+  out.innerHTML = simResultHtml(r, res, data, sim.amount, rows);
+}
+
+// ----- 실제 매매 기록 (sys.trades[코드] = [{ t, kind, qty, price }], 날짜마다 하나) -----
+const KIND = { buy: '매수', tp: '익절', sl: '손절' };
+let simLast = null; // 지금 차트의 규칙 시뮬레이션 결과 (목록을 눌렀을 때 그날 규칙 값을 채우려고)
+const tradesOf = r => S.data.sys.trades?.[r.code] || [];
+// 팝업을 닫으면 입력 처리기를 떼어, 다음에 여는 다른 팝업(설정·항목 편집)에 남지 않게
+function resetModalHandlers() { mform.oninput = null; mform.onchange = null; }
+
+// 실제 기록을 날짜 순으로 따라가며 평단·손익을 계산한다 (손익 = (판 가격 − 평단) × 주식 수, 수수료 제외).
+// 실제 매수 기록 없이 판 날은 그날 규칙의 평단을 쓴다. skip = 고치는 중인 기록의 날짜 (빼고 계산)
+function realLedger(r, res, skip) {
+  const out = new Map();
+  let qty = 0, avg = 0;
+  for (const x of [...tradesOf(r)].sort((a, b) => a.t.localeCompare(b.t))) {
+    if (x.t === skip) continue;
+    const q = num(x.qty), px = num(x.price), side = x.kind === 'buy' ? 'buy' : 'sell';
+    const row = { t: x.t, kind: x.kind, side, qty: q, price: px, amount: q * px, real: true, avgBefore: qty ? avg : res?.events.find(e => e.t === x.t)?.avg };
+    if (side === 'buy') { avg = (qty * avg + q * px) / (qty + q); qty += q; }
+    else {
+      if (row.avgBefore) { row.pnl = (px - row.avgBefore) * q; row.ret = px / row.avgBefore - 1; }
+      qty = Math.max(0, qty - q);
+      if (!qty) avg = 0;
+    }
+    out.set(x.t, row);
+  }
+  return { rows: out, qty, avg };
+}
+
+// 표·요약·화살표에 쓰는 행: 실제 기록 + 가상(규칙대로 했을 때).
+// 가상은 마지막 실제 기록 뒤의 것만 (그 전은 실제로 대신함). "가상 데이터 표시"를 끄면 실제만
+const showVirtual = () => S.data.sys.showVirtual !== false;
+function tradeRows(r, res, start) {
+  const real = [...realLedger(r, res).rows.values()];
+  const last = real.reduce((a, x) => (x.t > a ? x.t : a), '');
+  const virt = showVirtual() ? res.events.filter(e => e.t > last) : [];
+  return [...virt, ...real.filter(x => !start || x.t >= start)].sort((a, b) => a.t.localeCompare(b.t));
+}
+
+// 목록의 한 줄을 누르면: 그날 실제로 한 매매를 넣거나 고친다 (금액·손익은 자동)
+function openTrade(id, t) {
+  const r = chartRows.find(x => x.id === id);
+  if (!r) return;
+  const res = simLast?.id === id ? simLast.res : null;
+  const real = tradesOf(r).find(x => x.t === t);
+  const rule = res?.events.find(e => e.t === t);
+  const x = real || rule || { t: ymd(), kind: 'buy', qty: '', price: '' };
+  const us = isUS(r), cur = us ? '$' : '';
+  const money = v => (v === '' || v == null ? '' : us ? v : Math.round(num(v)).toLocaleString('ko-KR'));
+  mform.innerHTML = `
+    <h2>실제 매매 <small class="muted">${esc(r.name)}</small></h2>
+    <p class="muted small">${real ? '내가 넣은 실제 기록이에요.' : '규칙대로라면 이날 이렇게 해요. 실제로 한 대로 고쳐서 저장하세요.'}</p>
+    <div class="fields">
+      <label class="field"><span>날짜</span><input name="t" type="date" value="${esc(x.t)}" required></label>
+      <label class="field"><span>구분</span><select name="kind">${Object.entries(KIND).map(([k, l]) => `<option value="${k}"${x.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="field"><span>주식 수</span><input name="qty" type="number" step="any" inputmode="decimal" value="${esc(x.qty)}" required></label>
+      <label class="field"><span>가격 (${us ? '$' : '원'})</span><input name="price" ${us ? 'type="number" step="any" inputmode="decimal"' : 'type="text" inputmode="numeric"'} value="${esc(money(x.price))}" required></label>
+    </div>
+    <dl class="trade-calc"><dt>금액</dt><dd id="tc-amt"></dd><dt>손익</dt><dd id="tc-pnl"></dd></dl>
+    <div class="modal-actions">
+      ${real ? '<button type="button" class="btn danger" data-m="del">지우기</button>' : ''}
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-m="close">취소</button>
+      <button class="btn primary" type="submit">저장</button>
+    </div>`;
+  const calc = () => {
+    const q = num(mform.qty.value), px = num(mform.price.value), sell = mform.kind.value !== 'buy';
+    $('#tc-amt').textContent = q && px ? fmtMoney(q * px, cur) : '—';
+    // 판 날: 그 전까지의 실제 평단 (실제 매수 기록이 없으면 그날 규칙의 평단)
+    const led = realLedger(r, res, real?.t);
+    const before = [...led.rows.values()].filter(y => y.t < mform.t.value);
+    let qty = 0, avg = 0;
+    for (const y of before) {
+      if (y.side === 'buy') { avg = (qty * avg + y.qty * y.price) / (qty + y.qty); qty += y.qty; } else { qty = Math.max(0, qty - y.qty); if (!qty) avg = 0; }
+    }
+    const base = qty ? avg : res?.events.find(e => e.t === mform.t.value)?.avg;
+    const el = $('#tc-pnl');
+    if (!sell) { el.textContent = '— (산 날)'; el.className = ''; return; }
+    if (!base || !q || !px) { el.textContent = base ? '—' : '— (평단을 몰라요: 산 날도 넣어 주세요)'; el.className = ''; return; }
+    const pnl = (px - base) * q;
+    el.textContent = `${pnl >= 0 ? '+' : ''}${fmtMoney(pnl, cur)} (${pct(px / base - 1)}) · 평단 ${fmtMoney(base, cur)}`;
+    el.className = pnl >= 0 ? 'up' : 'down';
+  };
+  calc();
+  mform.oninput = e => {
+    if (e.target.name === 'price' && !us) commaInput(e.target);
+    calc();
+  };
+  mform.onchange = calc;
+  modal.addEventListener('close', resetModalHandlers, { once: true });
+  const save = async list => {
+    S.data.sys.trades = { ...S.data.sys.trades, [r.code]: list };
+    await store.changedSys();
+    modal.close();
+    drawChart().catch(err => toast(err.message, true));
+  };
+  mform.onclick = e => {
+    const m = e.target.closest('[data-m]')?.dataset.m;
+    if (m === 'close') modal.close();
+    if (m === 'del' && confirm(`${real.t} 실제 기록을 지울까요? (그날은 다시 규칙대로 보여요)`)) {
+      save(tradesOf(r).filter(y => y.t !== real.t)).then(() => toast('지웠어요.')).catch(err => toast(err.message, true));
+    }
+  };
+  mform.onsubmit = e => {
+    e.preventDefault();
+    const rec = { t: mform.t.value, kind: mform.kind.value, qty: num(mform.qty.value), price: num(mform.price.value) };
+    if (!rec.t || !(rec.qty > 0) || !(rec.price > 0)) return toast('날짜·주식 수·가격을 넣어주세요.', true);
+    const others = tradesOf(r).filter(y => y.t !== real?.t);
+    if (others.some(y => y.t === rec.t) && !confirm(`${rec.t}에 이미 실제 기록이 있어요. 바꿀까요?`)) return;
+    save([...others.filter(y => y.t !== rec.t), rec]).then(() => toast('실제 매매를 저장했어요.')).catch(err => toast(err.message, true));
+  };
+  if (!modal.open) modal.showModal();
 }
 
 // 기간 = 시작일 뒤 처음 산 날 ~ 마지막 날. 실제 매매 수익 = 판 것만 (실현 손익, ÷ 금액 = %).
 // 그냥 보유 = 같은 기간에 처음 산 날 종가로 사서 들고 있었을 때
-function periodOf(res, data, amount) {
-  const first = res.events.find(e => e.side === 'buy');
+function periodOf(rows, res, data, amount) {
+  const first = rows.find(e => e.side === 'buy');
   if (!first) return null;
   const to = res.summary.to;
-  const realized = res.events.reduce((a, e) => a + (e.pnl || 0), 0);
+  const realized = rows.reduce((a, e) => a + (e.pnl || 0), 0);
   const end = data.c.findLast(k => k[0] <= to)[4];
-  return { from: first.t, to, realized, ret: realized / amount, sold: res.events.some(e => e.side === 'sell'), hold: end / first.price - 1 };
+  return { from: first.t, to, realized, ret: realized / amount, sold: rows.some(e => e.side === 'sell'), hold: end / first.price - 1 };
 }
 
 const pct = v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
 
-function simResultHtml(r, res, data, amount) {
+function simResultHtml(r, res, data, amount, rows) {
   const cur = isUS(r) ? '$' : '';
   // 그날 언제·어떻게 주문하는지 (swing.js decide와 같은 방식)
   const how = e => (!isUS(r) ? '15:20 동시호가' : e.kind === 'sl' ? '20:00 MOC 매도' : `20:00 LOC ${e.side === 'buy' ? '매수' : '매도'}`);
   const sm = res.summary;
   if (!sm) return '<p class="muted small">이 기간에는 자료가 없어요. 시작일을 앞으로 당겨 보세요.</p>';
-  const pd = periodOf(res, data, num(amount));
-  const kind = { buy: '매수', tp: '익절', sl: '손절' };
-  const ev = [...res.events].reverse();
+  const pd = periodOf(rows, res, data, num(amount));
+  const ev = [...rows].reverse();
   const shown = ui.simAll ? ev : ev.slice(0, 30);
   const pos = res.position;
   return `
@@ -1183,16 +1300,18 @@ function simResultHtml(r, res, data, amount) {
       <div><span>실제 매매 수익</span>${pd.sold ? `<b class="${pd.ret >= 0 ? 'up' : 'down'}">${pd.realized >= 0 ? '+' : ''}${fmtMoney(pd.realized, cur)} (${pct(pd.ret)})</b>` : '<b class="muted">아직 안 팖</b>'}</div>
       <div><span>그냥 보유</span><b class="${pd.hold >= 0 ? 'up' : 'down'}">${pct(pd.hold)}</b></div>
       ${pos ? `<div><span>지금 보유</span><b>${fmtNum(pos.qty)}주 · 투자금의 ${pos.units * 20}% · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
-    </div>` : `<p class="muted small">${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).</p>`}
+    </div>` : `<p class="muted small">${showVirtual() ? `${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).` : `${esc(sm.from)}부터 실제 매매 기록이 없어요.`}</p>`}
+    <label class="check sim-virt"><input type="checkbox" data-virt${showVirtual() ? ' checked' : ''}> 가상 데이터 표시 <small class="muted">(규칙대로 했다면)</small></label>
     ${ev.length ? `<div class="table-wrap"><table class="sim-table">
       <thead><tr><th>날짜</th><th>구분</th><th>주문</th><th class="num">주식 수</th><th class="num">가격</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
-      <tbody>${shown.map(e => `<tr>
-        <td>${e.t}</td><td><span class="kind ${e.kind}">${kind[e.kind]}</span></td><td class="muted small">${how(e)}</td>
+      <tbody>${shown.map(e => `<tr class="${e.real ? 'real' : ''}" data-act="trade" data-id="${r.id}" data-t="${e.t}" tabindex="0" title="눌러서 이날 실제 매매 넣기·고치기">
+        <td>${e.t}</td><td><span class="kind ${e.kind}">${KIND[e.kind]}</span>${e.real ? '<span class="real-tag">실제</span>' : ''}</td><td class="muted small">${how(e)}</td>
         <td class="num">${fmtNum(e.qty)}</td><td class="num">${fmtMoney(e.price, cur)}</td><td class="num">${fmtMoney(e.amount, cur)}</td>
         <td class="num">${e.pnl == null ? '' : `<span class="${e.pnl >= 0 ? 'up' : 'down'}">${e.pnl >= 0 ? '+' : ''}${fmtMoney(e.pnl, cur)} (${pct(e.ret)})</span>`}</td>
       </tr>`).join('')}</tbody></table></div>
       ${ev.length > 30 ? `<div class="row"><button type="button" class="btn small" data-act="sim-all">${ui.simAll ? '최근 30개만' : `모두 보기 (${ev.length}개)`}</button></div>` : ''}`
-    : '<p class="muted small">이 기간에는 사고판 적이 없어요.</p>'}`;
+    : `<p class="muted small">${showVirtual() ? '이 기간에는 사고판 적이 없어요.' : '실제 기록이 없어요. 가상 데이터 표시를 켜고 그날 줄을 눌러 넣으세요.'}</p>`}
+    ${ev.length ? '<p class="muted small">줄을 누르면 그날 실제로 한 매매(날짜·구분·주식 수·가격)를 넣을 수 있어요. 실제 기록은 <span class="real-tag">실제</span>로 표시돼요.</p>' : ''}`;
 }
 
 // 종목을 넣거나 바꾸면 가격 받을 목록(my-prices/tickers.json)에도 넣는다
@@ -1540,6 +1659,7 @@ view.addEventListener('click', e => {
       toast('가격을 다시 불러왔어요.');
       break;
     case 'ch-pick': ui.chartId = id; ui.simAll = false; render(); break;
+    case 'trade': openTrade(id, el.dataset.t); break;
     case 'sim-all': ui.simAll = !ui.simAll; drawChart().catch(err => toast(err.message, true)); break;
     case 'sw-fill': swingFill(id, Number(el.dataset.i)).catch(err => toast(err.message, true)); break;
   }
@@ -1572,7 +1692,15 @@ view.addEventListener('submit', e => {
     store.changedSys().catch(err => toast(err.message, true));
   }
 });
-view.addEventListener('change', e => { if (e.target.type === 'checkbox') swingInput(e); });
+view.addEventListener('change', e => {
+  if (e.target.matches('[data-virt]')) {
+    S.data.sys.showVirtual = e.target.checked;
+    drawChart().catch(err => toast(err.message, true));
+    store.changedSys().catch(err => toast(err.message, true));
+    return;
+  }
+  if (e.target.type === 'checkbox') swingInput(e);
+});
 
 view.addEventListener('input', e => {
   const k = e.target.dataset.q;
