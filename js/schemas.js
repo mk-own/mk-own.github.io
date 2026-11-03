@@ -63,8 +63,8 @@ export const COLLECTIONS = {
       { k: 'price', l: '현재가', type: 'money' },
       { k: 'asOf', l: '현재가 기준일', type: 'date' },
       { k: 'fx', l: '환율 (해외만, 원/$)', type: 'number' },
-      { k: 'account', l: '단타 계좌 금액 (해외는 $) · 넣으면 음봉 단타 적용', type: 'money' },
-      { k: 'units', l: '단타 보유 칸 (0~5)', type: 'number' },
+      { k: 'account', l: '단타 투자금 (해외는 $) · 넣으면 음봉 단타 적용', type: 'money' },
+      { k: 'units', l: '단타로 산 양 (0~5, 1 = 투자금의 20%)', type: 'number' },
       memo,
     ],
     cols: [

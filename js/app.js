@@ -933,7 +933,7 @@ async function swingSetup(f) {
   const kept = new Set(rows.map(find).filter(Boolean));
   const dropped = items('stocks').filter(r => num(r.account) > 0 && !kept.has(r));
   const held = [...kept, ...dropped].filter(r => num(r.qty) > 0 && num(r.account) > 0).map(r => r.name);
-  if (held.length && !confirm(`보유 중인 종목(${held.join(', ')})이 있어요. 계좌 금액이 바뀌면 1칸 크기도 바로 바뀌고, 뺀 종목은 단타 안내가 멈춰요. 계속할까요?`)) return false;
+  if (held.length && !confirm(`보유 중인 종목(${held.join(', ')})이 있어요. 투자금이 바뀌면 한 번에 사는 금액(투자금의 20%)도 바로 바뀌고, 뺀 종목은 단타 안내가 멈춰요. 계속할까요?`)) return false;
 
   const changed = rows.map(x => {
     const won = total * x.pct / 100, us = isUS(x);
@@ -951,14 +951,14 @@ async function swingSetup(f) {
   await store.changedSys();
   syncTickers(rows);
   render();
-  toast('넣었어요. 이미 갖고 있는 주식은 아래 목록에서 수량·평단을 넣어 두면 보유 칸을 자동으로 정해요.');
+  toast('넣었어요. 이미 갖고 있는 주식은 아래 목록에서 수량·평단을 넣어 두면 투자금의 몇 %를 샀는지 자동으로 정해요.');
   return true;
 }
 
 const SWING_RULES = `<ul class="sw-rules">
-  <li><b>사기</b> 200일선이 20일 전보다 높음 + 음봉(종가 &lt; 시가) → 2칸 (1칸만 남으면 1칸), 최대 5칸</li>
+  <li><b>사기</b> 200일선이 20일 전보다 높음 + 음봉(종가 &lt; 시가) → 투자금의 40%어치 (20%만 남았으면 20%), 100% 차면 더 안 삼</li>
   <li><b>팔기</b> 종가가 평단 +5% 이상 → 전부 익절 · −15% 이하 → 전부 손절 · 판 날은 안 삼</li>
-  <li><b>1칸</b> 계좌 금액 ÷ 5 (다 팔면 다시 계산)</li>
+  <li><b>투자금</b> 전체 금액 × 종목 비율. 20%씩 나눠 사요 · 다 팔면 번 돈·잃은 돈을 더해 다시 정함</li>
   <li><b>주문</b> 국내 15:20 예상체결가로 판단, 동시호가 주문 · 미국 아침에 어젯밤 봉 확인 → 20:00 LOC (손절은 MOC)</li>
 </ul>`;
 
@@ -974,7 +974,7 @@ function swingHtml() {
       const units = Math.round(num(r.units));
       return `<div class="sw-item" data-sw="${r.id}">
         <div class="sw-head"><b>${esc(r.name)}</b>
-          <span class="muted small">${units}/5칸 · 1칸 ${fmtMoney(num(r.account) / 5, cur)}${num(r.qty) ? ` · ${fmtNum(r.qty)}주 평단 ${fmtMoney(r.avg, cur)}` : ''}</span></div>
+          <span class="muted small">${units ? `투자금의 ${units * 20}% 샀음 (${fmtMoney(num(r.account) * units / 5, cur)} / ${fmtMoney(num(r.account), cur)})` : `아직 안 삼 · 투자금 ${fmtMoney(num(r.account), cur)}`}${num(r.qty) ? ` · ${fmtNum(r.qty)}주 평단 ${fmtMoney(r.avg, cur)}` : ''}</span></div>
         <div class="sw-inputs">
           <label class="field"><span>${us ? '어젯밤 시가' : '오늘 시가'}</span><input type="number" step="any" inputmode="decimal" data-sw-k="open" value="${esc(v.open ?? '')}"></label>
           <label class="field"><span>${us ? '어젯밤 종가' : '예상체결가 (15:20)'}</span><input type="number" step="any" inputmode="decimal" data-sw-k="close" value="${esc(v.close ?? '')}"></label>
@@ -1176,7 +1176,7 @@ function simResultHtml(r, res, data, amount) {
       <div><span>기간 <small>처음 산 날부터</small></span><b>${pd.from} ~ ${pd.to}</b></div>
       <div><span>수익률 <small>판 것만</small></span>${pd.sold ? `<b class="${pd.ret >= 0 ? 'up' : 'down'}">${pct(pd.ret)}</b>` : '<b class="muted">아직 안 팖</b>'}</div>
       <div><span>그냥 들고 있었다면</span><b class="${pd.hold >= 0 ? 'up' : 'down'}">${pct(pd.hold)}</b></div>
-      ${pos ? `<div><span>지금 보유</span><b>${fmtNum(pos.qty)}주 · ${pos.units}/5칸 · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
+      ${pos ? `<div><span>지금 보유</span><b>${fmtNum(pos.qty)}주 · 투자금의 ${pos.units * 20}% · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
     </div>` : `<p class="muted small">${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).</p>`}
     ${ev.length ? `<div class="table-wrap"><table class="sim-table">
       <thead><tr><th>날짜</th><th>구분</th><th class="num">주식 수</th><th class="num">가격</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
