@@ -484,7 +484,9 @@ async function writeLocal(paths) {
       if (!content.length) content = null;
     }
     const prev = S.cache[p] || { sha: null, ver: 0 };
-    S.cache[p] = { sha: prev.sha, env: content ? await encryptText(S.dek.key, JSON.stringify(content)) : null, ver: (prev.ver || 0) + 1 };
+    // baseEnv = 고치기 전 GitHub에 있던 내용. 다른 기기가 그사이 고쳤으면 이걸 기준으로 두 쪽 변경을 합친다
+    const baseEnv = S.dirty.has(p) ? prev.baseEnv : prev.env;
+    S.cache[p] = { sha: prev.sha, env: content ? await encryptText(S.dek.key, JSON.stringify(content)) : null, ver: (prev.ver || 0) + 1, baseEnv };
     await idbSet(`f:${p}`, S.cache[p]);
     S.dirty.add(p);
   }
@@ -536,10 +538,17 @@ export async function upload() {
           sha = await S.gh.put(S.device.repo, p, body, c.sha || undefined, 'save');
         } catch (e) {
           if (e.status !== 409 && e.status !== 422) throw e;
-          // 다른 기기가 먼저 고쳤거나 sha를 몰랐음 → 최신 sha로 덮어쓴다
-          sha = await S.gh.put(S.device.repo, p, body, (await S.gh.sha(S.device.repo, p)) || undefined, 'save');
+          // 다른 기기가 먼저 고쳤음 → 덮어쓰지 않고, 두 쪽에서 바꾼 것을 합쳐서 올린다
+          const rsha = await mergeRemote(p, c);
+          sha = await S.gh.put(S.device.repo, p, utf8b64(JSON.stringify(c.env)), rsha || undefined, 'save');
         }
         c.sha = sha;
+        c.baseEnv = undefined;
+        if (S.cache[p] !== c) {
+          // 올리는 동안 또 고쳤음: 다음 번엔 방금 올린 것이 기준
+          S.cache[p].sha = sha;
+          S.cache[p].baseEnv = c.env;
+        }
       } else {
         const sha = c.sha || await S.gh.sha(S.device.repo, p);
         if (sha) await S.gh.del(S.device.repo, p, sha, 'save');
@@ -565,6 +574,65 @@ export async function upload() {
 }
 
 addEventListener('online', () => { if (S.dirty.size) scheduleUpload(200); });
+
+// ---------- 다른 기기와 동시에 고쳤을 때 합치기 ----------
+// base = 둘 다 갖고 있던 옛 내용, local = 이 기기, remote = GitHub (다른 기기가 올린 것).
+// 한쪽만 바꾼 건 그쪽 것으로. 둘 다 바꾸면 객체는 키마다, 목록은 id(또는 날짜 t)마다 다시 나눠 본다.
+// 한쪽은 지우고 다른 쪽은 고쳤으면 고친 것을 남긴다 (데이터를 잃지 않게). 같은 값을 둘 다 고쳤으면 이 기기 것
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const isObj = v => v != null && typeof v === 'object' && !Array.isArray(v);
+const keyOf = x => (isObj(x) ? x.id ?? x.t : undefined);
+
+export function merge3(base, local, remote) {
+  if (same(local, base)) return remote;
+  if (same(remote, base) || same(local, remote)) return local;
+  if (local === undefined) return remote;
+  if (remote === undefined) return local;
+  if (Array.isArray(local) && Array.isArray(remote) && [...local, ...remote].every(x => keyOf(x) != null)) {
+    const b = new Map((Array.isArray(base) ? base : []).map(x => [keyOf(x), x]));
+    const l = new Map(local.map(x => [keyOf(x), x]));
+    const r = new Map(remote.map(x => [keyOf(x), x]));
+    const out = [];
+    for (const k of new Set([...l.keys(), ...r.keys()])) {
+      const v = merge3(b.get(k), l.get(k), r.get(k));
+      if (v !== undefined) out.push(v);
+    }
+    return out;
+  }
+  if (isObj(local) && isObj(remote)) {
+    const out = {};
+    for (const k of new Set([...Object.keys(remote), ...Object.keys(local)])) {
+      const v = merge3(isObj(base) ? base[k] : undefined, local[k], remote[k]);
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+  return local;
+}
+
+// GitHub의 최신 내용과 합쳐 c.env와 화면 데이터(S.data)를 바꾼다. GitHub의 sha를 돌려준다 (없으면 null)
+async function mergeRemote(p, c) {
+  const rsha = await S.gh.sha(S.device.repo, p);
+  const text = rsha ? await S.gh.getText(S.device.repo, p) : null;
+  if (text == null) return null;
+  const dec = async env => (env ? JSON.parse(await decryptText(S.dek.key, env)) : undefined);
+  const remote = await dec(JSON.parse(text));
+  const base = await dec(c.baseEnv);
+  const [, col, file] = p.split('/');
+  const n = parseInt(file, 10);
+  // 지금 화면의 값을 바로 읽어 합치고 바로 넣는다 (사이에 기다림이 없어 그동안 고친 것을 잃지 않음)
+  if (p === SYS) {
+    S.data.sys = merge3(base, S.data.sys, remote);
+  } else {
+    const local = S.data.items[col].filter(r => r._s === n);
+    const merged = merge3(base, local, remote) || [];
+    S.data.items[col] = [...S.data.items[col].filter(r => r._s !== n), ...merged.map(r => ({ ...r, _s: n }))];
+  }
+  const content = p === SYS ? S.data.sys : S.data.items[col].filter(r => r._s === n);
+  c.env = await encryptText(S.dek.key, JSON.stringify(content));
+  dispatchEvent(new CustomEvent('hub:merged'));
+  return rsha;
+}
 
 // ---------- 첨부 파일 ----------
 

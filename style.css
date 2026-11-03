@@ -587,3 +587,4 @@ html, body { overscroll-behavior-y: contain; }
   .chart { height: calc(100dvh - 16px); min-height: 220px; }
 }
 .sim-virt { margin: 4px 0 8px; }
+#modal .sw-rules { font-size: 14px; gap: 8px; margin: 8px 0 4px; }

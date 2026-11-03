@@ -560,6 +560,8 @@ function render() {
   if ($('#chart')) drawChart().catch(e => { const o = $('#sim-out'); if (o) o.innerHTML = `<p class="err">${esc(e.message)}</p>`; });
 }
 
+addEventListener('hub:merged', () => { if (S.data) render(); });
+
 addEventListener('hashchange', () => {
   if (!S.data) return;
   render();
@@ -956,6 +958,14 @@ async function swingSetup(f) {
   return true;
 }
 
+function openRules() {
+  mform.innerHTML = `<h2>음봉 단타 규칙</h2>${SWING_RULES}
+    <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
+  mform.onclick = e => { if (e.target.closest('[data-m=close]')) modal.close(); };
+  mform.onsubmit = e => e.preventDefault();
+  if (!modal.open) modal.showModal();
+}
+
 const SWING_RULES = `<ul class="sw-rules">
   <li><b>사기</b> 200일선이 20일 전보다 높음 + 음봉(종가 &lt; 시가) → 투자금의 40%어치 (20%만 남았으면 20%), 100% 차면 더 안 삼</li>
   <li><b>팔기</b> 종가가 평단 +5% 이상 → 전부 익절 · −15% 이하 → 전부 손절 · 판 날은 안 삼</li>
@@ -966,9 +976,10 @@ const SWING_RULES = `<ul class="sw-rules">
 function swingHtml() {
   const list = items('stocks').filter(r => num(r.account) > 0);
   return `<section class="card swing">
-    <h2>음봉 단타 <button type="button" class="btn small primary sw-edit" data-act="sw-plan">종목별 비율 입력</button>
-      <button type="button" class="btn small sw-edit" data-act="sw-refresh" title="가격·환율을 다시 불러와요">↻ 새로고침</button></h2>
-    ${SWING_RULES}
+    <h2>오늘 할 일 <small class="muted">음봉 단타</small>
+      <button type="button" class="btn small primary sw-edit" data-act="sw-plan">종목별 비율 입력</button>
+      <button type="button" class="btn small sw-edit" data-act="sw-refresh" title="가격·환율을 다시 불러와요">↻ 새로고침</button>
+      <button type="button" class="btn small sw-edit" data-act="sw-rules">규칙 보기</button></h2>
     ${list.length ? '' : '<p class="muted small sw-start">종목별 비율 입력을 눌러 전체 금액과 비율을 넣으면 오늘 할 일이 여기 나와요.</p>'}
     ${list.map(r => {
       const us = isUS(r), v = ui.swing[r.id] || {}, cur = us ? '$' : '';
@@ -1142,7 +1153,6 @@ async function drawChart() {
     position: e.side === 'buy' ? 'belowBar' : 'aboveBar',
     shape: e.real ? 'circle' : e.side === 'buy' ? 'arrowUp' : 'arrowDown',
     color: MARK[e.kind],
-    size: 1.6,
     text: e.real ? `실제 ${KIND[e.kind]}` : e.kind === 'tp' ? '익절' : e.kind === 'sl' ? '손절' : '',
   })));
   // 지금 실제로 갖고 있으면 평단·익절가·손절가 선
@@ -1301,7 +1311,7 @@ function simResultHtml(r, res, data, amount, rows) {
       <div><span>그냥 보유</span><b class="${pd.hold >= 0 ? 'up' : 'down'}">${pct(pd.hold)}</b></div>
       ${pos ? `<div><span>지금 보유</span><b>${fmtNum(pos.qty)}주 · 투자금의 ${pos.units * 20}% · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
     </div>` : `<p class="muted small">${showVirtual() ? `${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).` : `${esc(sm.from)}부터 실제 매매 기록이 없어요.`}</p>`}
-    <label class="check sim-virt"><input type="checkbox" data-virt${showVirtual() ? ' checked' : ''}> 가상 데이터 표시 <small class="muted">(규칙대로 했다면)</small></label>
+    <label class="check sim-virt"><input type="checkbox" data-virt${showVirtual() ? ' checked' : ''}> 가상 데이터 표시 <small class="muted">(규칙 반영)</small></label>
     ${ev.length ? `<div class="table-wrap"><table class="sim-table">
       <thead><tr><th>날짜</th><th>구분</th><th>주문</th><th class="num">주식 수</th><th class="num">단가</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
       <tbody>${shown.map(e => `<tr class="${e.real ? 'real' : ''}" data-act="trade" data-id="${r.id}" data-t="${e.t}" tabindex="0" title="눌러서 이날 실제 매매 넣기·고치기">
@@ -1652,6 +1662,7 @@ view.addEventListener('click', e => {
     case 'lib-upload': pickFile(el.dataset.dir ? 'lib-dir' : 'lib'); break;
     case 'settings': openSettings(); break;
     case 'sw-plan': openSwingPlan(); break;
+    case 'sw-rules': openRules(); break;
     case 'sw-refresh':
       for (const k of Object.keys(priceCache)) delete priceCache[k];
       for (const k of Object.keys(ui.swing)) if (ui.swing[k].auto) delete ui.swing[k];
