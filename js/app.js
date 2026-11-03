@@ -935,7 +935,8 @@ const SWING_RULES = `<ul class="sw-rules">
 function swingHtml() {
   const list = items('stocks').filter(r => num(r.account) > 0);
   return `<section class="card swing">
-    <h2>음봉 단타 <button type="button" class="btn small primary sw-edit" data-act="sw-plan">종목별 비율 입력</button></h2>
+    <h2>음봉 단타 <button type="button" class="btn small primary sw-edit" data-act="sw-plan">종목별 비율 입력</button>
+      <button type="button" class="btn small sw-edit" data-act="sw-refresh" title="가격·환율을 다시 불러와요">↻ 새로고침</button></h2>
     ${SWING_RULES}
     ${list.length ? '' : '<p class="muted small sw-start">종목별 비율 입력을 눌러 전체 금액과 비율을 넣으면 오늘 할 일이 여기 나와요.</p>'}
     ${list.map(r => {
@@ -1027,19 +1028,34 @@ function chartCardHtml(list) {
   if (!withCode.length) return '';
   if (!withCode.some(r => r.id === ui.chartId)) ui.chartId = withCode[0].id;
   const r = withCode.find(x => x.id === ui.chartId), us = isUS(r);
-  const sim = ui.sim[r.id] || {};
+  const sim = simOf(r);
+  const amt = us ? sim.amount : num(sim.amount).toLocaleString('ko-KR');
   return `<section class="card chart-card">
-    <h2>차트·시뮬레이션 <small class="muted">규칙대로 했다면</small></h2>
     <div class="chip-row">${withCode.map(x => `<button type="button" class="chip ${x.id === r.id ? 'on' : ''}" data-act="ch-pick" data-id="${x.id}">${esc(x.name)}</button>`).join('')}</div>
     <form class="sim-form" data-sim="${r.id}">
-      <label class="field"><span>금액 (${us ? '$' : '원'})</span><input name="amount" type="number" step="any" inputmode="decimal" value="${esc(sim.amount ?? num(r.account))}"></label>
-      <label class="field"><span>시작일 <small class="muted">(비우면 처음부터)</small></span><input name="start" type="date" value="${esc(sim.start || '')}"></label>
-      <button class="btn primary" type="submit">시뮬레이션</button>
+      <label class="field"><span>금액 (${us ? '$' : '원'}) <small class="muted">전체 금액 × 비율</small></span><input name="amount" ${us ? 'type="number" step="any" inputmode="decimal"' : 'type="text" inputmode="numeric"'} value="${esc(amt)}"></label>
+      <label class="field"><span>시작일</span><input name="start" type="date" value="${esc(sim.start)}"></label>
+      <button class="btn primary" type="submit">적용</button>
     </form>
     <div class="chart-legend muted small"><span><i class="lg buy"></i>매수</span><span><i class="lg tp"></i>익절</span><span><i class="lg sl"></i>손절</span><span><i class="lg ma"></i>200일선</span></div>
     <div id="chart" class="chart" aria-label="${esc(r.name)} 차트"></div>
     <div id="sim-out"><p class="muted small">가격 자료를 불러오는 중…</p></div>
   </section>`;
+}
+
+// 지난달 1일 (시작일 기본값)
+const lastMonth1 = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return ymd(d); };
+// 적용한 값이 없으면: 금액 = 그 종목 계좌 금액 (전체 금액 × 비율), 시작일 = 지난달 1일
+// 적용하면 sys.sim[코드]에 저장돼 다른 기기에서도 같음
+const simOf = r => ({ amount: num(r.account), start: lastMonth1(), ...S.data.sys.sim?.[r.code] });
+
+// 차트 가로축: 월/일 (해가 바뀌는 눈금만 연도도)
+function tickMD(t, type) {
+  const s = typeof t === 'string' ? t
+    : typeof t === 'object' ? `${t.year}-${t.month}-${t.day}`
+    : new Date(t * 1000).toISOString().slice(0, 10);
+  const [y, m, d] = s.split('-').map(Number);
+  return type === 0 ? `${y}년 ${m}/${d}` : `${m}/${d}`;
 }
 
 let chart = null;
@@ -1063,8 +1079,8 @@ async function drawChart() {
       : `<p class="muted small">${esc(r.name)}(${esc(r.code)}) 가격 자료가 아직 없어요. 가격 목록에 넣었으면 다음 자동 갱신 뒤에 보여요.</p>`;
     return;
   }
-  const sim = ui.sim[r.id] || {};
-  const res = simulate(data, { amount: sim.amount ?? num(r.account), start: sim.start || '' });
+  const sim = simOf(r);
+  const res = simulate(data, { amount: sim.amount, start: sim.start || '' });
 
   const css = getComputedStyle(document.documentElement);
   const col = k => css.getPropertyValue(k).trim();
@@ -1074,8 +1090,8 @@ async function drawChart() {
     layout: { background: { color: 'transparent' }, textColor: col('--text-2'), fontFamily: getComputedStyle(document.body).fontFamily },
     grid: { vertLines: { color: col('--line') }, horzLines: { color: col('--line') } },
     rightPriceScale: { borderColor: col('--line') },
-    timeScale: { borderColor: col('--line') },
-    localization: { locale: 'ko-KR', priceFormatter: v => (us ? `$${v.toFixed(2)}` : Math.round(v).toLocaleString('ko-KR')) },
+    timeScale: { borderColor: col('--line'), tickMarkFormatter: tickMD },
+    localization: { locale: 'ko-KR', dateFormat: 'yyyy-MM-dd', priceFormatter: v => (us ? `$${v.toFixed(2)}` : Math.round(v).toLocaleString('ko-KR')) },
   });
   const candles = chart.addCandlestickSeries({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
   candles.setData(data.c.map(([time, open, high, low, close]) => ({ time, open, high, low, close })));
@@ -1100,31 +1116,38 @@ async function drawChart() {
   const from = new Date(new Date(last) - 365 * 864e5).toISOString().slice(0, 10);
   chart.timeScale().setVisibleRange({ from: sim.start && sim.start > from ? sim.start : from, to: last });
 
-  out.innerHTML = simResultHtml(r, res, data);
+  out.innerHTML = simResultHtml(r, res, data, sim.amount);
+}
+
+// 기간 = 시작일 뒤 처음 산 날 ~ 마지막 날. 수익률 = 판 것만 (실현 손익 ÷ 금액).
+// 그냥 들고 있었다면 = 같은 기간에 처음 산 날 종가로 사서 들고 있었을 때
+function periodOf(res, data, amount) {
+  const first = res.events.find(e => e.side === 'buy');
+  if (!first) return null;
+  const to = res.summary.to;
+  const realized = res.events.reduce((a, e) => a + (e.pnl || 0), 0);
+  const end = data.c.findLast(k => k[0] <= to)[4];
+  return { from: first.t, to, ret: realized / amount, sold: res.events.some(e => e.side === 'sell'), hold: end / first.price - 1 };
 }
 
 const pct = v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
 
-function simResultHtml(r, res, data) {
+function simResultHtml(r, res, data, amount) {
   const cur = isUS(r) ? '$' : '';
   const sm = res.summary;
-  if (!sm) return '<p class="muted small">이 기간에는 시뮬레이션할 자료가 없어요. 시작일을 앞으로 당겨 보세요.</p>';
+  if (!sm) return '<p class="muted small">이 기간에는 자료가 없어요. 시작일을 앞으로 당겨 보세요.</p>';
+  const pd = periodOf(res, data, num(amount));
   const kind = { buy: '매수', tp: '익절', sl: '손절' };
   const ev = [...res.events].reverse();
   const shown = ui.simAll ? ev : ev.slice(0, 30);
   const pos = res.position;
   return `
-    <div class="sim-sum">
-      <div><span>기간</span><b>${sm.from} ~ ${sm.to}</b></div>
-      <div><span>시작 → 끝</span><b>${fmtMoney(sm.start, cur)} → ${fmtMoney(sm.end, cur)}</b></div>
-      <div><span>수익률</span><b class="${sm.ret >= 0 ? 'up' : 'down'}">${pct(sm.ret)}</b></div>
-      <div><span>1년 평균</span><b class="${sm.cagr >= 0 ? 'up' : 'down'}">${pct(sm.cagr)}</b></div>
-      <div><span>가장 크게 빠졌을 때</span><b class="down">-${(sm.mdd * 100).toFixed(1)}%</b></div>
-      <div><span>판 횟수 (이익)</span><b>${sm.trades}번 (${sm.wins}번)</b></div>
-      <div><span>그냥 들고 있었다면</span><b class="${sm.hold >= 0 ? 'up' : 'down'}">${pct(sm.hold)}</b></div>
-      ${pos ? `<div><span>끝날 때 보유</span><b>${fmtNum(pos.qty)}주 · ${pos.units}/5칸 · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
-    </div>
-    <p class="muted small">가격 기준 ${esc((data.updated || '').replace('T', ' ').slice(0, 16))} · 수수료·세금 포함 · 과거 결과이고 앞으로도 같다는 뜻은 아니에요</p>
+    ${pd ? `<div class="sim-sum">
+      <div><span>기간 <small>처음 산 날부터</small></span><b>${pd.from} ~ ${pd.to}</b></div>
+      <div><span>수익률 <small>판 것만</small></span>${pd.sold ? `<b class="${pd.ret >= 0 ? 'up' : 'down'}">${pct(pd.ret)}</b>` : '<b class="muted">아직 안 팖</b>'}</div>
+      <div><span>그냥 들고 있었다면</span><b class="${pd.hold >= 0 ? 'up' : 'down'}">${pct(pd.hold)}</b></div>
+      ${pos ? `<div><span>지금 보유</span><b>${fmtNum(pos.qty)}주 · ${pos.units}/5칸 · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
+    </div>` : `<p class="muted small">${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).</p>`}
     ${ev.length ? `<div class="table-wrap"><table class="sim-table">
       <thead><tr><th>날짜</th><th>구분</th><th class="num">주식 수</th><th class="num">가격</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
       <tbody>${shown.map(e => `<tr>
@@ -1474,6 +1497,12 @@ view.addEventListener('click', e => {
     case 'lib-upload': pickFile(el.dataset.dir ? 'lib-dir' : 'lib'); break;
     case 'settings': openSettings(); break;
     case 'sw-plan': openSwingPlan(); break;
+    case 'sw-refresh':
+      for (const k of Object.keys(priceCache)) delete priceCache[k];
+      for (const k of Object.keys(ui.swing)) if (ui.swing[k].auto) delete ui.swing[k];
+      render();
+      toast('가격을 다시 불러왔어요.');
+      break;
     case 'ch-pick': ui.chartId = id; ui.simAll = false; render(); break;
     case 'sim-all': ui.simAll = !ui.simAll; drawChart().catch(err => toast(err.message, true)); break;
     case 'sw-fill': swingFill(id, Number(el.dataset.i)).catch(err => toast(err.message, true)); break;
@@ -1493,13 +1522,18 @@ function swingInput(e) {
   box.querySelector('.sw-result').innerHTML = swingResultHtml(items('stocks').find(r => r.id === id));
 }
 view.addEventListener('input', swingInput);
+view.addEventListener('input', e => { if (e.target.matches('[data-sim] [name=amount][inputmode=numeric]')) commaInput(e.target); });
 view.addEventListener('submit', e => {
   const sf = e.target.closest('[data-sim]');
   if (sf) {
     e.preventDefault();
-    ui.sim[sf.dataset.sim] = { amount: num(sf.amount.value) || undefined, start: sf.start.value };
+    const r = chartRows.find(x => x.id === sf.dataset.sim);
+    if (!r) return;
+    const amount = num(sf.amount.value);
+    S.data.sys.sim = { ...S.data.sys.sim, [r.code]: { start: sf.start.value, ...(amount && amount !== num(r.account) ? { amount } : {}) } };
     ui.simAll = false;
     drawChart().catch(err => toast(err.message, true));
+    store.changedSys().catch(err => toast(err.message, true));
   }
 });
 view.addEventListener('change', e => { if (e.target.type === 'checkbox') swingInput(e); });
