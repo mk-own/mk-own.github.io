@@ -753,18 +753,35 @@ const SWING_PLAN = [
 const swingPlan = () => S.data.sys.swingPlan || { total: 20000000, fx: '', rows: SWING_PLAN };
 
 // 종목별 비율 입력 팝업의 한 줄: 종목명과 비율만. 코드는 이름으로 찾아 data-code에 둔다
-const planRowHtml = (x = {}) => `<div class="sw-row" data-code="${esc(x.code ?? '')}">
+const r2pct = v => Math.round(num(v) * 100) / 100;
+const planRowHtml = (x = {}) => `<div class="sw-row" data-code="${esc(x.code ?? '')}" data-pct="${esc(x.pct ?? '')}">
   <input name="pname" list="stock-names" placeholder="종목명 (예: SK하이닉스, QQQ)" value="${esc(x.name ?? '')}" aria-label="종목명" autocomplete="off">
-  <span class="sw-pct"><input name="ppct" type="number" step="any" inputmode="decimal" value="${esc(x.pct ?? '')}" aria-label="비율"> %</span>
+  <span class="sw-pct"><input name="ppct" type="number" step="any" inputmode="decimal" value="${esc(x.pct == null ? '' : r2pct(x.pct))}" aria-label="비율"> %</span>
+  <span class="sw-amt"><input name="pamt" type="text" inputmode="numeric" aria-label="투자 금액"> 원</span>
   <button type="button" class="btn small" data-act="sw-row-del" aria-label="이 종목 빼기">✕</button>
   <span class="sw-code muted small"></span>
 </div>`;
 
 function planSum(form) {
-  const sum = [...form.querySelectorAll('[name=ppct]')].reduce((a, i) => a + num(i.value), 0);
+  const sum = [...form.querySelectorAll('.sw-row')].reduce((a, r) => a + rowPct(r), 0);
   const el = form.querySelector('.sw-sum');
   el.textContent = `비율 합계 ${Math.round(sum * 100) / 100}%`;
-  el.classList.toggle('bad', Math.abs(sum - 100) > 0.001);
+  el.classList.toggle('bad', Math.abs(sum - 100) > PCT_TOL);
+}
+
+// 비율과 금액은 둘 중 하나만 넣으면 나머지가 따라온다 (금액 = 전체 금액 × 비율).
+// 정확한 비율은 data-pct에 두고 화면에는 소수 둘째 자리까지 (금액으로 넣으면 33.333…%)
+const PCT_TOL = 0.001;
+const rowPct = row => num(row.dataset.pct);
+function amtFromPct(form, row) {
+  const total = num(form.total.value), pct = rowPct(row);
+  row.querySelector('[name=pamt]').value = total && pct ? Math.round(total * pct / 100).toLocaleString('ko-KR') : '';
+}
+function pctFromAmt(form, row) {
+  const total = num(form.total.value), amt = num(row.querySelector('[name=pamt]').value);
+  if (!total) return;
+  row.dataset.pct = amt ? amt / total * 100 : '';
+  row.querySelector('[name=ppct]').value = amt ? r2pct(row.dataset.pct) : '';
 }
 
 // 종목명 → 코드. 국내는 상장 종목 목록(js/data/krx.json, KRX·네이버 기준), 영문은 미국 티커로 본다
@@ -843,7 +860,7 @@ function openSwingPlan() {
       <button class="btn primary" type="submit">적용</button>
     </div>`;
   planSum(mform);
-  for (const r of mform.querySelectorAll('.sw-row')) showCode(r);
+  for (const r of mform.querySelectorAll('.sw-row')) { showCode(r); amtFromPct(mform, r); }
   loadStockNames().then(m => {
     const dl = mform.querySelector('#stock-names');
     if (dl) dl.innerHTML = [...m.values()].map(([n]) => `<option value="${esc(n)}">`).join('');
@@ -856,7 +873,20 @@ function openSwingPlan() {
     note.textContent = `현재 환율 (${fx.date} 기준, 자동)`;
   });
   mform.oninput = e => {
-    if (e.target.name === 'total') commaInput(e.target);
+    if (e.target.name === 'total') {
+      commaInput(e.target);
+      for (const r of mform.querySelectorAll('.sw-row')) amtFromPct(mform, r);
+    }
+    if (e.target.name === 'pamt') {
+      commaInput(e.target);
+      pctFromAmt(mform, e.target.closest('.sw-row'));
+      planSum(mform);
+    }
+    if (e.target.name === 'ppct') {
+      const row = e.target.closest('.sw-row');
+      row.dataset.pct = e.target.value;
+      amtFromPct(mform, row);
+    }
     if (e.target.name === 'fx') mform.querySelector('#fx-note').textContent = '직접 넣은 값';
     if (e.target.name === 'ppct') planSum(mform);
     if (e.target.name === 'pname') showCode(e.target.closest('.sw-row'));
@@ -887,7 +917,7 @@ async function swingSetup(f) {
   const rows = [...f.querySelectorAll('.sw-row')].map(el => ({
     name: el.dataset.name || el.querySelector('[name=pname]').value.trim(),
     code: el.dataset.code,
-    pct: num(el.querySelector('[name=ppct]').value),
+    pct: rowPct(el),
   })).filter(x => x.name || x.pct);
   const bad = msg => { toast(msg, true); return false; };
   if (!total) return bad('전체 금액을 넣어주세요.');
@@ -896,7 +926,7 @@ async function swingSetup(f) {
   if (lost) return bad(`'${lost.name}' 종목을 못 찾았어요. 목록에서 고르거나 6자리 코드를 넣어주세요.`);
   if (rows.some(x => !x.name || !(x.pct > 0))) return bad('종목마다 이름과 비율을 넣어주세요.');
   const sum = rows.reduce((a, x) => a + x.pct, 0);
-  if (Math.abs(sum - 100) > 0.001) return bad(`비율 합계가 ${sum}%예요. 100%로 맞춰주세요.`);
+  if (Math.abs(sum - 100) > PCT_TOL) return bad(`비율 합계가 ${Math.round(sum * 100) / 100}%예요. 100%로 맞춰주세요.`);
   if (rows.some(x => isUS(x)) && !fx) return bad('해외 종목이 있으면 환율을 넣어주세요.');
 
   const find = x => items('stocks').find(s => (s.code && s.code.toUpperCase() === x.code) || s.name === x.name);

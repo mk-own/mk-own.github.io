@@ -493,7 +493,9 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .sw-text.sl { color: var(--down); }
 .swing h2 .sw-edit { float: right; font-weight: 400; }
 .sw-rows { display: grid; gap: 8px; margin: 12px 0 8px; }
-.sw-row { display: grid; grid-template-columns: 1fr 110px auto; gap: 4px 8px; align-items: center; }
+.sw-row { display: grid; grid-template-columns: 1fr 100px 160px auto; gap: 4px 8px; align-items: center; }
+.sw-amt { display: flex; align-items: center; gap: 4px; }
+.sw-amt input { width: 100%; text-align: right; }
 .sw-code { grid-column: 1 / -1; min-height: 1em; }
 .sw-code.bad { color: var(--danger); }
 .sw-row input { min-width: 0; }
@@ -501,7 +503,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .sw-pct input { width: 100%; }
 .sw-sum.bad { color: var(--danger); font-weight: 600; }
 @media (max-width: 560px) {
-  .sw-row { grid-template-columns: 1fr 84px auto; }
+  .sw-row { grid-template-columns: 84px 1fr auto; }
+  .sw-row [name=pname] { grid-column: 1 / -1; }
 }
 
 /* 패턴 */
