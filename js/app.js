@@ -1166,7 +1166,7 @@ const tradesOf = r => S.data.sys.trades?.[r.code] || [];
 // 팝업을 닫으면 입력 처리기를 떼어, 다음에 여는 다른 팝업(설정·항목 편집)에 남지 않게
 function resetModalHandlers() { mform.oninput = null; mform.onchange = null; }
 
-// 실제 기록을 날짜 순으로 따라가며 평단·손익을 계산한다 (손익 = (판 가격 − 평단) × 주식 수, 수수료 제외).
+// 실제 기록을 날짜 순으로 따라가며 평단·손익을 계산한다 (손익 = (판 단가 − 평단) × 주식 수, 수수료 제외).
 // 실제 매수 기록 없이 판 날은 그날 규칙의 평단을 쓴다. skip = 고치는 중인 기록의 날짜 (빼고 계산)
 function realLedger(r, res, skip) {
   const out = new Map();
@@ -1186,13 +1186,13 @@ function realLedger(r, res, skip) {
   return { rows: out, qty, avg };
 }
 
-// 표·요약·화살표에 쓰는 행: 실제 기록 + 가상(규칙대로 했을 때).
-// 가상은 마지막 실제 기록 뒤의 것만 (그 전은 실제로 대신함). "가상 데이터 표시"를 끄면 실제만
+// 표·요약·화살표에 쓰는 행: 실제 기록 + 가상(규칙대로 했을 때, 실제 앞뒤 모두).
+// 같은 날짜면 실제가 대신함. "가상 데이터 표시"를 끄면 실제만
 const showVirtual = () => S.data.sys.showVirtual !== false;
 function tradeRows(r, res, start) {
   const real = [...realLedger(r, res).rows.values()];
-  const last = real.reduce((a, x) => (x.t > a ? x.t : a), '');
-  const virt = showVirtual() ? res.events.filter(e => e.t > last) : [];
+  const days = new Set(real.map(x => x.t));
+  const virt = showVirtual() ? res.events.filter(e => !days.has(e.t)) : [];
   return [...virt, ...real.filter(x => !start || x.t >= start)].sort((a, b) => a.t.localeCompare(b.t));
 }
 
@@ -1213,7 +1213,7 @@ function openTrade(id, t) {
       <label class="field"><span>날짜</span><input name="t" type="date" value="${esc(x.t)}" required></label>
       <label class="field"><span>구분</span><select name="kind">${Object.entries(KIND).map(([k, l]) => `<option value="${k}"${x.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field"><span>주식 수</span><input name="qty" type="number" step="any" inputmode="decimal" value="${esc(x.qty)}" required></label>
-      <label class="field"><span>가격 (${us ? '$' : '원'})</span><input name="price" ${us ? 'type="number" step="any" inputmode="decimal"' : 'type="text" inputmode="numeric"'} value="${esc(money(x.price))}" required></label>
+      <label class="field"><span>단가 (${us ? '$' : '원'})</span><input name="price" ${us ? 'type="number" step="any" inputmode="decimal"' : 'type="text" inputmode="numeric"'} value="${esc(money(x.price))}" required></label>
     </div>
     <dl class="trade-calc"><dt>금액</dt><dd id="tc-amt"></dd><dt>손익</dt><dd id="tc-pnl"></dd></dl>
     <div class="modal-actions">
@@ -1263,7 +1263,7 @@ function openTrade(id, t) {
   mform.onsubmit = e => {
     e.preventDefault();
     const rec = { t: mform.t.value, kind: mform.kind.value, qty: num(mform.qty.value), price: num(mform.price.value) };
-    if (!rec.t || !(rec.qty > 0) || !(rec.price > 0)) return toast('날짜·주식 수·가격을 넣어주세요.', true);
+    if (!rec.t || !(rec.qty > 0) || !(rec.price > 0)) return toast('날짜·주식 수·단가를 넣어주세요.', true);
     const others = tradesOf(r).filter(y => y.t !== real?.t);
     if (others.some(y => y.t === rec.t) && !confirm(`${rec.t}에 이미 실제 기록이 있어요. 바꿀까요?`)) return;
     save([...others.filter(y => y.t !== rec.t), rec]).then(() => toast('실제 매매를 저장했어요.')).catch(err => toast(err.message, true));
@@ -1303,7 +1303,7 @@ function simResultHtml(r, res, data, amount, rows) {
     </div>` : `<p class="muted small">${showVirtual() ? `${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).` : `${esc(sm.from)}부터 실제 매매 기록이 없어요.`}</p>`}
     <label class="check sim-virt"><input type="checkbox" data-virt${showVirtual() ? ' checked' : ''}> 가상 데이터 표시 <small class="muted">(규칙대로 했다면)</small></label>
     ${ev.length ? `<div class="table-wrap"><table class="sim-table">
-      <thead><tr><th>날짜</th><th>구분</th><th>주문</th><th class="num">주식 수</th><th class="num">가격</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
+      <thead><tr><th>날짜</th><th>구분</th><th>주문</th><th class="num">주식 수</th><th class="num">단가</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
       <tbody>${shown.map(e => `<tr class="${e.real ? 'real' : ''}" data-act="trade" data-id="${r.id}" data-t="${e.t}" tabindex="0" title="눌러서 이날 실제 매매 넣기·고치기">
         <td>${e.t}</td><td><span class="kind ${e.kind}">${KIND[e.kind]}</span>${e.real ? '<span class="real-tag">실제</span>' : ''}</td><td class="muted small">${how(e)}</td>
         <td class="num">${fmtNum(e.qty)}</td><td class="num">${fmtMoney(e.price, cur)}</td><td class="num">${fmtMoney(e.amount, cur)}</td>
@@ -1311,7 +1311,7 @@ function simResultHtml(r, res, data, amount, rows) {
       </tr>`).join('')}</tbody></table></div>
       ${ev.length > 30 ? `<div class="row"><button type="button" class="btn small" data-act="sim-all">${ui.simAll ? '최근 30개만' : `모두 보기 (${ev.length}개)`}</button></div>` : ''}`
     : `<p class="muted small">${showVirtual() ? '이 기간에는 사고판 적이 없어요.' : '실제 기록이 없어요. 가상 데이터 표시를 켜고 그날 줄을 눌러 넣으세요.'}</p>`}
-    ${ev.length ? '<p class="muted small">줄을 누르면 그날 실제로 한 매매(날짜·구분·주식 수·가격)를 넣을 수 있어요. 실제 기록은 <span class="real-tag">실제</span>로 표시돼요.</p>' : ''}`;
+    ${ev.length ? '<p class="muted small">줄을 누르면 그날 실제로 한 매매(날짜·구분·주식 수·단가)를 넣을 수 있어요. 실제 기록은 <span class="real-tag">실제</span>로 표시돼요.</p>' : ''}`;
 }
 
 // 종목을 넣거나 바꾸면 가격 받을 목록(my-prices/tickers.json)에도 넣는다
