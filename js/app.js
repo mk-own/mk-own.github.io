@@ -1109,6 +1109,16 @@ function tickMD(t, type) {
 const LANDSCAPE = matchMedia('(orientation: landscape) and (max-height: 500px)');
 LANDSCAPE.addEventListener('change', e => { if (e.matches) setTimeout(() => $('#chart')?.scrollIntoView({ block: 'start' }), 300); });
 
+// 마지막 봉 뒤 평일 n개 (차트 오른쪽 여유 칸)
+function nextDays(t, n) {
+  const out = [], d = new Date(t + 'T00:00:00Z');
+  while (out.length < n) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (d.getUTCDay() % 6) out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
 let chart = null;
 const MA_COLOR = '#c28a00'; // 200일선 (익절·손절 색과 겹치지 않게)
 // 매수·익절·손절 표시: 봉 색(빨강·파랑)과 안 겹치게. style.css의 .lg / .kind와 같은 색
@@ -1145,12 +1155,12 @@ async function drawChart() {
     layout: { background: { color: 'transparent' }, textColor: col('--text-2'), fontFamily: getComputedStyle(document.body).fontFamily },
     grid: { vertLines: { color: col('--line') }, horzLines: { color: col('--line') } },
     rightPriceScale: { borderColor: col('--line') },
-    // 끌어도 첫 봉·마지막 봉 밖으로 빈 공간이 생기지 않게
+    // 끌어도 첫 봉 앞·마지막 봉 뒤로 빈 공간이 커지지 않게 (뒤는 빈 날 2칸만큼 여유)
     timeScale: { borderColor: col('--line'), tickMarkFormatter: tickMD, fixLeftEdge: true, fixRightEdge: true },
     localization: { locale: 'ko-KR', dateFormat: 'yyyy-MM-dd', priceFormatter: v => (us ? `$${v.toFixed(2)}` : Math.round(v).toLocaleString('ko-KR')) },
   });
   const candles = chart.addCandlestickSeries({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
-  candles.setData(data.c.map(([time, open, high, low, close]) => ({ time, open, high, low, close })));
+  candles.setData([...data.c.map(([time, open, high, low, close]) => ({ time, open, high, low, close })), ...nextDays(data.c.at(-1)[0], 2).map(time => ({ time }))]);
   const ma = ma200Line(data.c);
   chart.addLineSeries({ color: MA_COLOR, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
     .setData(data.c.map((k, i) => (ma[i] == null ? null : { time: k[0], value: ma[i] })).filter(Boolean));
@@ -1170,7 +1180,7 @@ async function drawChart() {
   }
   const last = data.c.at(-1)[0];
   const from = new Date(new Date(last) - 365 * 864e5).toISOString().slice(0, 10);
-  chart.timeScale().setVisibleRange({ from: sim.start && sim.start > from ? sim.start : from, to: last });
+  chart.timeScale().setVisibleRange({ from: sim.start && sim.start > from ? sim.start : from, to: nextDays(last, 2).at(-1) });
 
   out.innerHTML = simResultHtml(r, res, data, sim.amount, rows);
 }
