@@ -583,7 +583,9 @@ html, body { overscroll-behavior-y: contain; }
 .sim-table tr.today td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .sim-table tr.today:not(.today-more) td { border-bottom: 0; padding-bottom: 2px; }
 .sim-table tr.today-more td { padding-top: 0; white-space: normal; }
-.today-text { position: sticky; left: 12px; max-width: calc(100vw - 72px); }
+/* 문구 칸은 표 상자(옆으로 스크롤) 안 보이는 폭에 맞춰 줄바꿈: 상자 폭(cqw) − 좌우 12px */
+.table-wrap:has(tr.today-more) { container-type: inline-size; }
+.today-text { position: sticky; left: 12px; max-width: calc(100cqw - 24px); }
 .today-text.sw-text { margin: 0; font-size: 13px; }
 .today-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; background: var(--warn); color: var(--bg); vertical-align: 1px; }
 .kind.none, .kind.wait { color: var(--text-2); }
