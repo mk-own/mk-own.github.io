@@ -662,6 +662,32 @@ html, body { overscroll-behavior-y: contain; }
 .rule-card dd { margin: 0; min-width: 0; }
 .rule-note { margin: 8px 0 0; font-size: 13px; color: var(--text-2); }
 .rule-alt { margin: 10px 0 0; }
+/* 예외 매매 꼬리표 · 원장 나눔 */
+.ex-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; border: 1px solid var(--muted); color: var(--text-2); vertical-align: 1px; }
+.ex-split { display: block; font-size: 11px; color: var(--text-2); }
+/* 손익 칸: 실현·평가 · 규칙/예외 나눔 */
+.pnl-sub { display: block; font-size: 11px; color: var(--text-2); font-weight: 400; }
+.sim-tools { align-items: center; margin: 4px 0 8px; }
+.sim-tools .sim-virt { margin: 0; }
+/* 실제 매매 한꺼번에 넣기 */
+.imp-text textarea { min-height: 150px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; white-space: pre; overflow-wrap: normal; }
+.imp-opts { display: grid; gap: 6px; margin: 8px 0; }
+.imp-count { margin: 6px 0; font-size: 13px; color: var(--text-2); }
+.imp-table { font-size: 13px; }
+.imp-table td, .imp-table th { white-space: nowrap; padding: 6px 8px; }
+.imp-table tr.bad td, .imp-card.bad { color: var(--danger); }
+.imp-table tr.same td, .imp-card.same { color: var(--muted); }
+.imp-q { width: 64px; min-height: 30px; padding: 2px 6px; text-align: right; }
+.imp-table select, .imp-card select { width: auto; min-height: 30px; padding: 2px 6px; }
+.imp-st { font-size: 12px; color: var(--text-2); }
+.imp-conf { font-size: 12px; color: var(--warn); display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; white-space: normal; }
+.imp-hold { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.imp-hold p { margin: 0 0 4px; } .imp-hold p:last-child { margin: 0; }
+.imp-hold small { display: block; color: var(--text-2); }
+.imp-cards { display: grid; gap: 6px; }
+.imp-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 4px; font-size: 14px; }
+.imp-l1, .imp-l2 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.imp-l2 { font-size: 13px; }
 .rule-split p { margin: 6px 0; }
 .rule-fill { margin: 4px 0; padding-left: 20px; display: grid; gap: 4px; }
 .rule-fill .sq { font-family: ui-monospace, Consolas, monospace; letter-spacing: 1px; color: #12a150; margin-right: 6px; }
@@ -786,6 +812,11 @@ html, body { overscroll-behavior-y: contain; }
   .m-chart-set { border-top: 1px solid var(--line); margin-top: 8px; }
   .m-chart-set .sim-form { margin-top: 4px; }
   .m-sim-h { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .m-pnl { display: grid; gap: 6px; margin: 6px 0 8px; }
+  .m-pnl > div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 8px; font-size: 14px; }
+  .m-pnl > div > span small { color: var(--muted); font-size: 11px; }
+  .m-pnl .pnl-sub { flex-basis: 100%; text-align: right; }
+  .m-pnl b.up { color: var(--up); } .m-pnl b.down { color: var(--down); }
   .m-sum { display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; font-size: 14px; margin: 4px 0 6px; }
   .m-sum b.up { color: var(--up); } .m-sum b.down { color: var(--down); }
   .m-trs { display: grid; }
