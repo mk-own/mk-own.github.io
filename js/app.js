@@ -971,6 +971,7 @@ async function autofillSwing(list) {
     box.querySelector('[data-sw-k=maUp]').checked = ti.maUp;
     box.querySelector('.sw-auto').textContent = note;
     box.querySelector('.sw-result').innerHTML = swingResultHtml(r);
+    updateTodayRow(r.id);
   }
 }
 
@@ -1001,6 +1002,7 @@ function chartCardHtml(list) {
     </form>
     <div class="chart-legend muted small"><span><i class="lg buy"></i>매수</span><span><i class="lg tp"></i>익절</span><span><i class="lg sl"></i>손절</span><span><i class="lg ma"></i>200일선</span></div>
     <p class="muted small chart-how">화살표 날 = 주문하는 날 · ${us ? '그날 20:00에 LOC(손절은 MOC)로 주문 → 다음날 새벽 장 마감에 체결' : '그날 15:20 예상체결가를 보고 동시호가로 주문 → 15:30 체결'}</p>
+    <div id="chart-fresh" class="chart-fresh muted small" hidden></div>
     <div id="chart" class="chart" aria-label="${esc(r.name)} 차트"></div>
     <div id="sim-out"><p class="muted small">가격 자료를 불러오는 중…</p></div>
   </section>`;
@@ -1094,7 +1096,39 @@ async function drawChart() {
     if (over > 0.01) ts.setVisibleLogicalRange({ from: Math.max(0, lr.from - over), to: lastIdx + GAP });
   });
 
+  const fr = $('#chart-fresh');
+  if (fr) { fr.innerHTML = freshHtml(data); fr.hidden = false; }
   out.innerHTML = simResultHtml(r, res, data, sim.amount, rows);
+}
+
+// 그 시간대의 날짜·시각 { date: 'YYYY-MM-DD', hm: 'HH:MM', h, wd(0=일) }
+function zoned(tz, d = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'short' })
+    .formatToParts(d).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, hm: `${p.hour}:${p.minute}`, h: +p.hour, wd: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday) };
+}
+const md = s => { const [, m, d] = String(s).split('-').map(Number); return `${m}/${d}`; };
+const prevWeekday = s => { const d = new Date(s + 'T12:00:00Z'); do d.setUTCDate(d.getUTCDate() - 1); while ([0, 6].includes(d.getUTCDay())); return d.toISOString().slice(0, 10); };
+
+// 차트 위 한 줄: 가격 기준 시각 + 판단할 봉이 아직 없으면 알림 (가짜 봉은 그리지 않음)
+//   국내: 평일인데 마지막 봉이 오늘 전 · 미국: 마지막 확정 봉이 지난 미국 장보다 전 (공휴일은 따지지 않음)
+function freshHtml(data) {
+  const at = new Date(data.updated || '');
+  const kst = Number.isNaN(+at) ? null : zoned('Asia/Seoul', at);
+  const line = `가격 기준 ${kst ? `${kst.hm} (${md(kst.date)})` : esc(data.updated || '모름')}`;
+  const last = todayInputs(data)?.date;
+  if (!last) return line;
+  let late = '';
+  if (!data.us) {
+    const now = zoned('Asia/Seoul');
+    if (now.wd > 0 && now.wd < 6 && last < now.date) late = `오늘(${md(now.date)}) 가격이 아직 안 들어왔어요.`;
+  } else {
+    const ny = zoned('America/New_York');
+    const want = ny.wd > 0 && ny.wd < 6 && ny.h >= 16 ? ny.date : prevWeekday(ny.date);
+    if (last < want) late = `어젯밤(${md(want)}) 미국 장 가격이 아직 안 들어왔어요.`;
+  }
+  if (!late) return line;
+  return `${line}<p class="fresh-late">${late} 판단은 마지막 봉(${md(last)})으로 해요. 새 가격은 <button type="button" class="btn small" data-act="sw-refresh">↻ 새로고침</button>으로 불러와요.</p>`;
 }
 
 // ----- 실제 매매 기록 (sys.trades[코드] = [{ t, kind, qty, price }], 날짜마다 하나) -----
@@ -1134,14 +1168,20 @@ function tradeRows(r, res, start) {
   return [...virt, ...real.filter(x => !start || x.t >= start)].sort((a, b) => a.t.localeCompare(b.t));
 }
 
+// 오늘 줄을 눌렀을 때 채울 값: 오늘 규칙의 주문 (매수가 있으면 매수). 쉬는 날이면 null
+function todayOrder(r) {
+  const p = swingParams(r), d = decide(p), o = d.orders.find(x => x.side === 'buy') || d.orders[0];
+  return o ? { t: ymd(), kind: o.kind, qty: o.qty, price: o.price ?? p.close ?? '' } : null;
+}
+
 // 목록의 한 줄을 누르면: 그날 실제로 한 매매를 넣거나 고친다 (금액·손익은 자동)
 function openTrade(id, t) {
   const r = chartRows.find(x => x.id === id);
   if (!r) return;
   const res = simLast?.id === id ? simLast.res : null;
   const real = tradesOf(r).find(x => x.t === t);
-  const rule = res?.events.find(e => e.t === t);
-  const x = real || rule || { t: ymd(), kind: 'buy', qty: '', price: '' };
+  const rule = res?.events.find(e => e.t === t) || (t === ymd() ? todayOrder(r) : null);
+  const x = real || rule || { t: t || ymd(), kind: 'buy', qty: '', price: '' };
   const us = isUS(r), cur = us ? '$' : '';
   const money = v => (v === '' || v == null ? '' : us ? v : Math.round(num(v)).toLocaleString('ko-KR'));
   mform.innerHTML = `
@@ -1227,7 +1267,11 @@ function simResultHtml(r, res, data, amount, rows) {
   // 그날 언제·어떻게 주문하는지 (swing.js decide와 같은 방식)
   const how = e => (!isUS(r) ? '15:20 동시호가' : e.kind === 'sl' ? '20:00 MOC 매도' : `20:00 LOC ${e.side === 'buy' ? '매수' : '매도'}`);
   const sm = res.summary;
-  if (!sm) return '<p class="muted small">이 기간에는 자료가 없어요. 시작일을 앞으로 당겨 보세요.</p>';
+  // 표는 늘 보임: 맨 위 오늘 줄 (가상 데이터 표시와 상관없음, 합계에 안 들어감) + 지난 기록
+  const table = body => `<div class="table-wrap"><table class="sim-table">
+      <thead><tr><th>날짜</th><th>구분</th><th>주문</th><th class="num">주식 수</th><th class="num">단가</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
+      <tbody>${todayRowHtml(r)}${body}</tbody></table></div>`;
+  if (!sm) return `${table('')}<p class="muted small">이 기간에는 자료가 없어요. 시작일을 앞으로 당겨 보세요.</p>`;
   const pd = periodOf(rows, res, data, num(amount));
   const ev = [...rows].reverse();
   const shown = ui.simAll ? ev : ev.slice(0, 30);
@@ -1240,16 +1284,38 @@ function simResultHtml(r, res, data, amount, rows) {
       ${pos ? `<div><span>지금 보유</span><b>${fmtNum(pos.qty)}주 · 투자금의 ${pos.units * 20}% · 평단 ${fmtMoney(pos.avg, cur)}</b></div>` : ''}
     </div>` : `<p class="muted small">${showVirtual() ? `${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).` : `${esc(sm.from)}부터 실제 매매 기록이 없어요.`}</p>`}
     <label class="check sim-virt"><input type="checkbox" data-virt${showVirtual() ? ' checked' : ''}> 가상 데이터 표시 <small class="muted">(규칙 반영)</small></label>
-    ${ev.length ? `<div class="table-wrap"><table class="sim-table">
-      <thead><tr><th>날짜</th><th>구분</th><th>주문</th><th class="num">주식 수</th><th class="num">단가</th><th class="num">금액</th><th class="num">손익</th></tr></thead>
-      <tbody>${shown.map(e => `<tr class="${e.real ? 'real' : ''}" data-act="trade" data-id="${r.id}" data-t="${e.t}" tabindex="0" title="눌러서 이날 실제 매매 넣기·고치기">
+    ${table(shown.map(e => `<tr class="${e.real ? 'real' : ''}" data-act="trade" data-id="${r.id}" data-t="${e.t}" tabindex="0" title="눌러서 이날 실제 매매 넣기·고치기">
         <td>${e.t}</td><td><span class="kind ${e.kind}">${KIND[e.kind]}</span>${e.real ? '<span class="real-tag">실제</span>' : ''}</td><td class="muted small">${how(e)}</td>
         <td class="num">${fmtNum(e.qty)}</td><td class="num">${fmtMoney(e.price, cur)}</td><td class="num">${fmtMoney(e.amount, cur)}</td>
         <td class="num">${e.pnl == null ? '' : `<span class="${e.pnl >= 0 ? 'up' : 'down'}">${e.pnl >= 0 ? '+' : ''}${fmtMoney(e.pnl, cur)} (${pct(e.ret)})</span>`}</td>
-      </tr>`).join('')}</tbody></table></div>
-      ${ev.length > 30 ? `<div class="row"><button type="button" class="btn small" data-act="sim-all">${ui.simAll ? '최근 30개만' : `모두 보기 (${ev.length}개)`}</button></div>` : ''}`
-    : `<p class="muted small">${showVirtual() ? '이 기간에는 사고판 적이 없어요.' : '실제 기록이 없어요. 가상 데이터 표시를 켜고 그날 줄을 눌러 넣으세요.'}</p>`}
-    ${ev.length ? '<p class="muted small">줄을 누르면 그날 실제로 한 매매(날짜·구분·주식 수·단가)를 넣을 수 있어요. 실제 기록은 <span class="real-tag">실제</span>로 표시돼요.</p>' : ''}`;
+      </tr>`).join(''))}
+    ${ev.length > 30 ? `<div class="row"><button type="button" class="btn small" data-act="sim-all">${ui.simAll ? '최근 30개만' : `모두 보기 (${ev.length}개)`}</button></div>` : ''}
+    ${ev.length ? '' : `<p class="muted small">${showVirtual() ? '이 기간에는 사고판 적이 없어요.' : '실제 기록이 없어요. 가상 데이터 표시를 켜고 그날 줄을 눌러 넣으세요.'}</p>`}
+    <p class="muted small">줄을 누르면 그날 실제로 한 매매(날짜·구분·주식 수·단가)를 넣을 수 있어요. <span class="today-tag">오늘</span>은 오늘 규칙이 시키는 일, <span class="real-tag">실제</span>는 내가 넣은 기록이에요.</p>`;
+}
+
+// 오늘 줄: 오늘 할 일 카드와 같은 decide 결과 (주문 시각·방식 + 카드 문구). 손익은 비움
+const TODAY_KIND = { ...KIND, none: '쉼', wait: '대기' };
+function todayRowHtml(r) {
+  const us = isUS(r), cur = us ? '$' : '', p = swingParams(r), d = decide(p), t = ymd();
+  const ready = num(p.account) && num(p.open) && num(p.close);
+  const kinds = d.orders.length ? [...new Set(d.orders.map(o => o.kind))] : [ready ? 'none' : 'wait'];
+  const how = d.order ? `${us ? '20:00' : '15:20'} ${d.order}` : '주문 없음';
+  const price = d.price == null ? '' : `${fmtMoney(d.price, cur)}${d.action === 'buy' ? '까지' : ''}`;
+  const attrs = `data-act="trade" data-id="${r.id}" data-t="${t}" title="눌러서 오늘 실제 매매 넣기"`;
+  return `<tr class="today" ${attrs} tabindex="0">
+      <td>${t}<span class="today-tag">오늘</span></td><td>${kinds.map(k => `<span class="kind ${k}">${TODAY_KIND[k]}</span>`).join(' ')}</td><td class="small">${how}</td>
+      <td class="num">${d.qty ? fmtNum(d.qty) : ''}</td><td class="num">${price}</td><td class="num"></td><td class="num"></td>
+    </tr>
+    <tr class="today today-more" ${attrs}><td colspan="7"><div class="today-text sw-text ${d.action}">${esc(d.text)}</div></td></tr>`;
+}
+
+// 오늘 할 일 입력이 바뀌면 표의 오늘 줄도 다시 그린다 (늘 같은 내용)
+function updateTodayRow(id) {
+  const tb = $('#sim-out .sim-table tbody'), r = chartRows.find(x => x.id === id);
+  if (!tb || !r || ui.chartId !== id) return;
+  tb.querySelectorAll('tr.today').forEach(x => x.remove());
+  tb.insertAdjacentHTML('afterbegin', todayRowHtml(r));
 }
 
 // 종목을 넣거나 바꾸면 가격 받을 목록(my-prices/tickers.json)에도 넣는다
@@ -1615,6 +1681,7 @@ function swingInput(e) {
   const id = box.dataset.sw;
   ui.swing[id] = { ...(ui.swing[id] || {}), [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value, auto: false };
   box.querySelector('.sw-result').innerHTML = swingResultHtml(swingList().find(r => r.id === id));
+  updateTodayRow(id);
 }
 view.addEventListener('input', swingInput);
 view.addEventListener('input', e => { if (e.target.matches('[data-sim] [name=amount][inputmode=numeric]')) commaInput(e.target); });

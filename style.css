@@ -578,6 +578,19 @@ html, body { overscroll-behavior-y: contain; }
 .sim-table tr.real { background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 600; }
 .sim-table tr.real td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .real-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; background: var(--accent); color: #fff; vertical-align: 1px; }
+/* 오늘 줄: 표 맨 위, 노란 띠 (두 줄: 값 + 오늘 할 일 문구) */
+.sim-table tr.today { background: color-mix(in srgb, var(--warn) 14%, transparent); font-weight: 600; }
+.sim-table tr.today td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.sim-table tr.today:not(.today-more) td { border-bottom: 0; padding-bottom: 2px; }
+.sim-table tr.today-more td { padding-top: 0; white-space: normal; }
+.today-text { position: sticky; left: 12px; max-width: calc(100vw - 72px); }
+.today-text.sw-text { margin: 0; font-size: 13px; }
+.today-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; background: var(--warn); color: var(--bg); vertical-align: 1px; }
+.kind.none, .kind.wait { color: var(--text-2); }
+/* 차트 위 가격 기준 시각 · 오늘 봉이 아직 없을 때 알림 */
+.chart-fresh { margin: 0 0 4px; }
+.chart-fresh .fresh-late { margin: 4px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); }
+.chart-fresh .fresh-late .btn { vertical-align: baseline; }
 .trade-calc { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 4px; font-size: 14px; }
 .trade-calc dt { color: var(--text-2); }
 .trade-calc dd { margin: 0; font-weight: 600; }
