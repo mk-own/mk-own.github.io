@@ -481,7 +481,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .field input:disabled { opacity: .45; }
 
 /* 음봉 단타 카드 */
-.swing h2 { font-size: 16px; margin: 0 0 8px; }
+.swing h2 { font-size: 16px; margin: 0 0 8px; display: flow-root; } /* 오른쪽 버튼(float)을 제목 안에 가둬 아래 안내문이 온 폭을 씀 */
 .sw-item { padding: 12px 0; border-top: 1px solid var(--line); }
 .sw-item:first-of-type { border-top: 0; }
 .sw-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
@@ -492,6 +492,12 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .sw-text.tp { color: var(--up); }
 .sw-text.sl { color: var(--down); }
 .swing h2 .sw-edit { float: right; font-weight: 400; }
+/* 좁은 화면: 버튼은 제목 아래 줄로 (왼쪽부터 차례로) */
+@media (max-width: 560px) {
+  .swing h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .swing h2 small { margin-right: auto; }
+  .swing h2 .sw-edit { float: none; }
+}
 .sw-rows { display: grid; gap: 8px; margin: 12px 0 8px; }
 .sw-row { display: grid; grid-template-columns: 1fr 100px 160px auto; gap: 4px 8px; align-items: center; }
 .sw-amt { display: flex; align-items: center; gap: 4px; }
@@ -556,7 +562,24 @@ html, body { overscroll-behavior-y: contain; }
 .chart-card h2 { font-size: 16px; margin: 0 0 8px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .sim-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; align-items: end; margin-bottom: 10px; }
-.chart { height: 360px; width: 100%; margin: 6px 0 12px; }
+.chart { height: 360px; width: 100%; margin: 6px 0 12px; position: relative; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; } /* 오래 눌러도 글자 선택·메뉴 없음 */
+/* 봉 정보 상자 (차트 왼쪽 위 · 마우스 올림 / 오래 누름) */
+.chart-tip { position: absolute; top: 8px; left: 8px; z-index: 3; pointer-events: none; min-width: 150px; padding: 6px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45;
+  background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--ring); box-shadow: var(--shadow); color: var(--text); }
+.chart-tip b { display: block; margin-bottom: 2px; }
+.chart-tip dl { display: grid; grid-template-columns: auto auto; gap: 0 12px; margin: 0; }
+.chart-tip dl > div { display: contents; }
+.chart-tip dt { color: var(--text-2); }
+.chart-tip dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.chart-tip .tip-mark { margin: 3px 0 0; font-weight: 600; }
+.chart-tip .tip-mark.buy { color: #12a150; } .chart-tip .tip-mark.tp { color: #e07b00; } .chart-tip .tip-mark.sl { color: #8b5cf6; }
+/* 좁은 화면: 차트 안에 두면 봉을 가려서, 차트 바로 위에 얇은 띠로 (가격 기준 줄 위에 잠깐 겹침) */
+@media (max-width: 560px) {
+  .chart-tip { top: auto !important; bottom: calc(100% + 2px) !important; left: 0 !important; right: 0 !important; min-width: 0; padding: 4px 8px; font-size: 11px; line-height: 1.4; background: var(--surface); }
+  .chart-tip dl { display: flex; flex-wrap: wrap; gap: 0 10px; }
+  .chart-tip dl > div { display: flex; gap: 3px; white-space: nowrap; }
+  .chart-tip .tip-mark { display: inline-block; margin: 0 6px 0 0; }
+}
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .chart-legend .lg { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .lg.buy { background: #12a150; } .lg.tp { background: #f08c00; } .lg.sl { background: #8b5cf6; } .lg.ma { background: #c28a00; height: 3px; vertical-align: 2px; }
@@ -578,6 +601,9 @@ html, body { overscroll-behavior-y: contain; }
 .chart-card .chip-row { gap: 8px; margin-bottom: 12px; }
 .chart-card .chip { font-size: 15px; height: 38px; padding: 0 18px; border-radius: 19px; border: 1.5px solid var(--text-2); color: var(--text); }
 .chart-card .chip.on { border-color: var(--text); color: var(--bg); }
+/* 한 카드 안: 칩 아래 고른 종목의 오늘 할 일, 그 아래 차트 (줄로 나눔) */
+.chart-card .sw-start { margin: 0 0 10px; }
+.chart-card .sw-item { border-top: 0; border-bottom: 1px solid var(--line); padding: 0 0 12px; margin-bottom: 12px; }
 .sim-sum span small { font-size: 11px; opacity: .8; }
 .chart-how { margin: 2px 0 6px; }
 
@@ -587,6 +613,9 @@ html, body { overscroll-behavior-y: contain; }
 .sim-table tr.real { background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 600; }
 .sim-table tr.real td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .real-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; background: var(--accent); color: #fff; vertical-align: 1px; }
+/* 주식 목록: 실제 매매가 수량·평단에 반영된 줄 · 차트 목록: 시작일 전 실제 기록 */
+.link-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 600; padding: 0 5px; border-radius: 5px; border: 1px solid var(--line); color: var(--text-2); vertical-align: 1px; white-space: nowrap; }
+.pre-tag { font-size: 11px; font-weight: 400; }
 /* 오늘 줄: 표 맨 위, 노란 띠 (두 줄: 값 + 오늘 할 일 문구) */
 .sim-table tr.today { background: color-mix(in srgb, var(--warn) 14%, transparent); font-weight: 600; }
 .sim-table tr.today td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
