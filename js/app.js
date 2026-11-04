@@ -1097,7 +1097,7 @@ async function drawChart() {
   });
 
   const fr = $('#chart-fresh');
-  if (fr) { fr.innerHTML = freshHtml(data); fr.hidden = false; }
+  if (fr) { fr._data = data; fr.innerHTML = freshHtml(data); fr.hidden = false; }
   out.innerHTML = simResultHtml(r, res, data, sim.amount, rows);
 }
 
@@ -1117,7 +1117,7 @@ function freshHtml(data) {
   const kst = Number.isNaN(+at) ? null : zoned('Asia/Seoul', at);
   const line = `가격 기준 ${kst ? `${kst.hm} (${md(kst.date)})` : esc(data.updated || '모름')}`;
   const last = todayInputs(data)?.date;
-  if (!last) return line;
+  if (!last) return line + fetchNoteHtml();
   let late = '';
   if (!data.us) {
     const now = zoned('Asia/Seoul');
@@ -1127,8 +1127,81 @@ function freshHtml(data) {
     const want = ny.wd > 0 && ny.wd < 6 && ny.h >= 16 ? ny.date : prevWeekday(ny.date);
     if (last < want) late = `어젯밤(${md(want)}) 미국 장 가격이 아직 안 들어왔어요.`;
   }
-  if (!late) return line;
-  return `${line}<p class="fresh-late">${late} 판단은 마지막 봉(${md(last)})으로 해요. 새 가격은 <button type="button" class="btn small" data-act="sw-refresh">↻ 새로고침</button>으로 불러와요.</p>`;
+  if (!late) return line + fetchNoteHtml();
+  return `${line}<p class="fresh-late">${late} 판단은 마지막 봉(${md(last)})으로 해요. 새 가격은 <button type="button" class="btn small" data-act="sw-refresh">↻ 새로고침</button>으로 불러와요.</p>${fetchNoteHtml()}`;
+}
+
+// ----- ↻ 새로고침: 가격 저장소(my-prices)의 GitHub Action을 바로 돌려 새 가격을 받는다 -----
+// 이 사이트는 네이버에 직접 못 감(CSP) → Action이 받아서 커밋 → 가격 파일 sha가 바뀌면 다시 그림.
+// 무료 Actions 시간 아끼기: 마지막 실행 2분 안이면 다시 안 돌리고 기다리기만 · 가격이 5분 안에 갱신됐으면 안 돌림
+const PRICE_WF = 'prices.yml';
+const DISPATCH_K = 'hub.pricesRunAt', HELP_K = 'hub.actionsHelp'; // sessionStorage (이 탭에서만)
+const fetchSt = { busy: false, note: '' }; // busy: 새 가격 기다리는 중 · note: 차트 위에 보일 안내
+const ssGet = k => { try { return sessionStorage.getItem(k); } catch { return null; } };
+const ssSet = (k, v) => { try { sessionStorage.setItem(k, v); } catch {} };
+
+function fetchNoteHtml() {
+  if (fetchSt.busy) return '<p class="fresh-busy">새 가격 받는 중… (1분쯤 걸려요)</p>';
+  return fetchSt.note ? `<div class="fresh-note">${fetchSt.note}</div>` : '';
+}
+const showFetchNote = () => { const fr = $('#chart-fresh'); if (fr && !fr.hidden) fr.innerHTML = freshHtml(fr._data || {}); };
+
+const ACTIONS_HELP = `<p><b>새 가격을 바로 받으려면 GitHub 토큰에 Actions 권한이 필요해요.</b> 지금은 이미 받아 둔 가격으로 보여 줘요.</p>
+  <p>github.com → Settings → Developer settings → Personal access tokens → Fine-grained tokens → 지금 쓰는 토큰 → Repository permissions → <b>Actions</b>: <b>Read and write</b> → <b>Update</b>. 토큰 문자열은 그대로라 사이트에서 바꿀 것은 없어요.</p>`;
+
+// 받아 둔 가격으로 바로 다시 그리기 (예전 ↻와 같음)
+function reloadPrices() {
+  for (const k of Object.keys(priceCache)) delete priceCache[k];
+  for (const k of Object.keys(ui.swing)) if (ui.swing[k].auto) delete ui.swing[k];
+  if ($('.swing')) render();
+}
+
+async function refreshPrices() {
+  fetchSt.note = '';
+  reloadPrices();
+  const code = chartRows.find(x => x.id === ui.chartId)?.code || swingList().find(r => r.code)?.code;
+  if (!code) return toast('가격을 다시 불러왔어요.');
+  if (fetchSt.busy) return toast('새 가격 받는 중이에요. 조금만 기다려 주세요.');
+  const path = `prices/${encodeURIComponent(code)}.json`;
+  const data = await loadPrices(code);
+  const age = Date.now() - new Date(data?.updated || 0);
+  if (age >= 0 && age < 5 * 60e3) return toast('가격을 다시 불러왔어요. (방금 받은 가격이에요)');
+  let sha0 = await S.gh.sha(PRICE_REPO, path).catch(() => null);
+  let ranAt = Number(ssGet(DISPATCH_K)) || 0;
+  if (Date.now() - ranAt >= 2 * 60e3) {
+    try {
+      await S.gh.json('POST', `/repos/${S.gh.owner}/${PRICE_REPO}/actions/workflows/${PRICE_WF}/dispatches`, { ref: 'main' });
+      ranAt = Date.now();
+      ssSet(DISPATCH_K, String(ranAt));
+    } catch (e) {
+      if (e.status !== 403 && e.status !== 404) return toast(`새 가격을 받지 못했어요: ${e.message}`, true);
+      // 권한 없음: 받아 둔 가격은 이미 다시 그렸음. 안내는 이 탭에서 한 번만
+      if (!ssGet(HELP_K)) { ssSet(HELP_K, '1'); fetchSt.note = ACTIONS_HELP; showFetchNote(); }
+      return toast('가격을 다시 불러왔어요.');
+    }
+  }
+  // 돌린 때부터 3분까지 10초마다 확인 (2분 안에 다시 누르면 새로 안 돌리고 남은 시간만 기다림)
+  const until = ranAt + 3 * 60e3;
+  fetchSt.busy = true; showFetchNote();
+  try {
+    while (Date.now() < until) {
+      await new Promise(r => setTimeout(r, 10e3));
+      const sha = await S.gh.sha(PRICE_REPO, path).catch(() => null);
+      if (!sha0) { sha0 = sha; continue; }
+      if (sha && sha !== sha0) {
+        fetchSt.busy = false;
+        reloadPrices();
+        const at = new Date((await loadPrices(code))?.updated || '');
+        toast(`새 가격을 받았어요${Number.isNaN(+at) ? '' : ` (${zoned('Asia/Seoul', at).hm})`}`);
+        return;
+      }
+    }
+    fetchSt.busy = false;
+    fetchSt.note = '<p>아직 안 들어왔어요. 잠시 뒤 다시 눌러 보세요.</p>';
+    reloadPrices();
+  } finally {
+    if (fetchSt.busy) { fetchSt.busy = false; showFetchNote(); }
+  }
 }
 
 // ----- 실제 매매 기록 (sys.trades[코드] = [{ t, kind, qty, price }], 날짜마다 하나) -----
@@ -1657,12 +1730,7 @@ view.addEventListener('click', e => {
     case 'settings': openSettings(); break;
     case 'sw-plan': openSwingPlan(); break;
     case 'sw-rules': openRules(); break;
-    case 'sw-refresh':
-      for (const k of Object.keys(priceCache)) delete priceCache[k];
-      for (const k of Object.keys(ui.swing)) if (ui.swing[k].auto) delete ui.swing[k];
-      render();
-      toast('가격을 다시 불러왔어요.');
-      break;
+    case 'sw-refresh': refreshPrices().catch(err => toast(err.message, true)); break;
     case 'ch-pick': ui.chartId = id; ui.simAll = false; render(); break;
     case 'trade': openTrade(id, el.dataset.t); break;
     case 'sim-all': ui.simAll = !ui.simAll; drawChart().catch(err => toast(err.message, true)); break;

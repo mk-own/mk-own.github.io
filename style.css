@@ -593,6 +593,11 @@ html, body { overscroll-behavior-y: contain; }
 .chart-fresh { margin: 0 0 4px; }
 .chart-fresh .fresh-late { margin: 4px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); color: var(--text-2); }
 .chart-fresh .fresh-late .btn { vertical-align: baseline; }
+/* ↻ 새 가격 받는 중 · 권한 안내 */
+.chart-fresh .fresh-busy { margin: 4px 0 0; color: var(--accent); font-weight: 600; }
+.chart-fresh .fresh-note { margin: 4px 0 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--text-2); overflow-wrap: anywhere; }
+.chart-fresh .fresh-note p { margin: 0 0 4px; }
+.chart-fresh .fresh-note p:last-child { margin: 0; }
 .trade-calc { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 4px; font-size: 14px; }
 .trade-calc dt { color: var(--text-2); }
 .trade-calc dd { margin: 0; font-weight: 600; }
