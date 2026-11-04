@@ -599,6 +599,8 @@ html, body { overscroll-behavior-y: contain; }
 
 /* 차트 카드 종목 고르기: 크게, 안 고른 것도 잘 보이게 */
 .chart-card .chip-row { gap: 8px; margin-bottom: 12px; }
+/* 주식 카드 첫 줄: 종목별 비율 입력 · 규칙 보기 · ↻ 새로고침 (제목 없이, 바로 아래 종목 칩) */
+.sw-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .chart-card .chip { font-size: 15px; height: 38px; padding: 0 18px; border-radius: 19px; border: 1.5px solid var(--text-2); color: var(--text); }
 .chart-card .chip.on { border-color: var(--text); color: var(--bg); }
 /* 한 카드 안: 칩 아래 고른 종목의 오늘 할 일, 그 아래 차트 (줄로 나눔) */
@@ -646,6 +648,23 @@ html, body { overscroll-behavior-y: contain; }
 }
 .sim-virt { margin: 4px 0 8px; }
 #modal .sw-rules { font-size: 14px; gap: 8px; margin: 8px 0 4px; }
+/* 규칙 보기: 짧은 제목 + 주문마다 카드 (시간 · 방법 · 가격). 좁은 화면은 한 줄에 한 장, 옆으로 안 밀림 */
+.rules { font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.rules h3 { margin: 18px 0 8px; font-size: 15px; color: var(--text); }
+.rules .rule-key { margin: 0 0 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.rule-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.rule-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.rule-card { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.rule-card.buy { border-left-color: #12a150; } .rule-card.tp { border-left-color: #f08c00; } .rule-card.sl { border-left-color: #8b5cf6; }
+.rule-card h4 { margin: 0 0 6px; font-size: 15px; }
+.rule-card dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 0; }
+.rule-card dt { color: var(--text-2); font-size: 13px; }
+.rule-card dd { margin: 0; min-width: 0; }
+.rule-note { margin: 8px 0 0; font-size: 13px; color: var(--text-2); }
+.rule-alt { margin: 10px 0 0; }
+.rule-split p { margin: 6px 0; }
+.rule-fill { margin: 4px 0; padding-left: 20px; display: grid; gap: 4px; }
+.rule-fill .sq { font-family: ui-monospace, Consolas, monospace; letter-spacing: 1px; color: #12a150; margin-right: 6px; }
 
 /* 할 일 (Google 할 일) */
 .gt-sub { font-size: 13px; font-weight: 500; margin-left: 6px; }
@@ -706,3 +725,99 @@ html, body { overscroll-behavior-y: contain; }
 .gt-msub-row input { flex: 1; min-width: 0; }
 .gt-mlink { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 0; }
 .gt-mlink .btn { display: inline-flex; align-items: center; text-decoration: none; padding-left: 0; color: var(--accent); }
+
+/* ===== 휴대폰 (폭 600px 미만) 주식 화면: 지금 할 일 먼저 · 덜 쓰는 것은 접기. PC와 다른 화면에는 영향 없음 ===== */
+@media (max-width: 599px) {
+  /* 누르기 쉬운 크기 (주식 화면 안에서만) */
+  .m-swing .btn, .m-adv .btn { height: 44px; }
+  .m-swing .btn.small, .m-adv .btn.small { height: 40px; }
+  .m-swing .chip { min-height: 40px; }
+  .m-swing input[type=checkbox] { width: 22px; height: 22px; min-height: 22px; }
+
+  /* 접는 칸 공통 */
+  .m-fold > summary { list-style: none; cursor: pointer; min-height: 44px; display: flex; align-items: center; flex-wrap: wrap; gap: 0 6px; font-size: 14px; font-weight: 600; color: var(--text-2); }
+  .m-fold > summary::-webkit-details-marker { display: none; }
+  .m-fold > summary::after { content: "\203A"; margin-left: auto; font-size: 20px; line-height: 1; color: var(--muted); transition: transform .15s; }
+  .m-fold[open] > summary::after { transform: rotate(90deg); }
+  .m-fold > summary small { font-weight: 400; color: var(--muted); }
+
+  /* 주식: 지금 할 일 카드들 → 차트 카드 (버튼 줄 → 칩 → 가격 기준 → 차트) */
+  .m-swing { display: grid; gap: 12px; margin-bottom: 12px; }
+  .m-swing .card { margin-bottom: 0; }
+  .sw-btns { flex-wrap: nowrap; gap: 6px; }
+  .sw-btns .btn { flex: 1 1 auto; min-width: 0; padding: 0 6px; font-size: 13px; }
+  .m-chart .chart-fresh { margin: 0 0 4px; }
+  .m-chart .fresh-late .btn { height: 28px; padding: 0 10px; vertical-align: middle; }
+
+  /* 지금 할 일 카드 (시장별) */
+  .m-slot { padding: 12px 14px 4px; }
+  .m-slot-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+  .m-slot-h b { font-size: 15px; }
+  .m-hero { padding: 0 0 4px; border: 2px solid var(--warn); background: color-mix(in srgb, var(--warn) 6%, var(--surface)); overflow: hidden; }
+  .m-band { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 7px 14px; background: var(--warn); color: #fff; font-size: 13px; font-weight: 700; }
+  .m-hero .m-rows { padding: 0 14px; }
+  .m-row { padding: 12px 0 4px; border-top: 1px solid var(--line); }
+  .m-rows > .m-row:first-child { border-top: 0; }
+  .m-row-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .m-row-h b { font-size: 15px; }
+  .m-big { font-size: 20px; font-weight: 800; line-height: 1.25; margin-top: 4px; color: var(--text-2); }
+  .m-big.buy { color: #12a150; } .m-big.tp { color: #e07b00; } .m-big.sl { color: #8b5cf6; }
+  .m-big.rest { font-weight: 600; color: var(--muted); }
+  .m-hero .m-big { font-size: 26px; }
+  .m-how { font-size: 15px; font-weight: 600; margin-top: 2px; }
+  .m-detail.sw-text { margin: 4px 0 0; font-size: 13px; font-weight: 400; color: var(--text-2); }
+  .m-how small { font-weight: 400; color: var(--text-2); }
+  .m-sub { margin: 2px 0 0; font-size: 13px; color: var(--text-2); }
+  .m-sl { margin: 10px 0 2px; padding: 6px 10px; border-left: 3px solid #8b5cf6; background: var(--surface-2); border-radius: 6px; font-size: 13px; }
+  .m-big + .m-how + .m-sub + .m-big, .m-how + .m-big { margin-top: 10px; }
+  .m-row .sw-result .row { margin-top: 10px; }
+  .m-row .sw-result .btn { height: 44px; font-size: 15px; }
+  .m-hero .sw-result .btn { flex: 1; height: 50px; font-size: 17px; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .m-link { display: block; width: 100%; min-height: 40px; margin: 4px 0 0; padding: 0; border: 0; background: none; font: inherit; font-size: 13px; color: var(--accent); text-align: center; cursor: pointer; }
+  .m-why { border-top: 1px dashed var(--line); margin-top: 4px; }
+  .m-why .sw-inputs { grid-template-columns: 1fr 1fr; }
+  .m-why .sw-inputs .check { grid-column: 1 / -1; min-height: 40px; }
+  .m-why .sw-auto { margin: 4px 0 10px; }
+  .m-why .m-ma { margin: 0 0 4px; }
+
+  /* 차트 카드 */
+  .m-chart { padding: 14px; }
+  .m-chart .chart { height: 260px; margin: 4px 0 6px; }
+  .m-chart-set { border-top: 1px solid var(--line); margin-top: 8px; }
+  .m-chart-set .sim-form { margin-top: 4px; }
+  .m-sim-h { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .m-sum { display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; font-size: 14px; margin: 4px 0 6px; }
+  .m-sum b.up { color: var(--up); } .m-sum b.down { color: var(--down); }
+  .m-trs { display: grid; }
+  .m-tr { display: grid; grid-template-columns: 46px 1fr auto; gap: 2px 10px; align-items: center; padding: 10px 2px; border-top: 1px solid var(--line); cursor: pointer; }
+  .m-tr.real { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; }
+  .m-tr-d { font-weight: 700; font-size: 14px; display: grid; }
+  .m-tr-d small { font-weight: 400; color: var(--muted); font-size: 11px; }
+  .m-tr-q { display: grid; gap: 2px; justify-items: start; min-width: 0; }
+  .m-tr-q small { font-size: 12px; }
+  .m-tr-k { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 14px; }
+  .m-tr-p { text-align: right; font-weight: 700; font-size: 14px; display: grid; }
+  .m-tr-p small { font-weight: 400; font-size: 11px; color: var(--muted); }
+  .m-tr-p .up { color: var(--up); } .m-tr-p .down { color: var(--down); }
+  .m-sim-more { border-top: 1px solid var(--line); margin-top: 2px; }
+  .m-sim-more > summary { justify-content: center; color: var(--accent); }
+  .m-sim-more > summary::after { display: none; }
+  .m-sim-more .sim-sum { margin-top: 4px; }
+
+  /* 고급 (주식 화면 맨 아래): 주식 원장 */
+  .m-adv { background: transparent; border: 1px dashed var(--line); box-shadow: none; padding: 4px 14px; }
+  .m-adv > summary { color: var(--muted); }
+  .m-adv-body { padding-bottom: 10px; }
+  .m-adv-h { margin: 6px 0 8px; font-size: 15px; color: var(--text); }
+
+  /* 주식 원장: 표 대신 카드 */
+  .m-sort { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+  .m-sort select { width: auto; flex: 1; min-height: 40px; }
+  .m-cards { display: grid; gap: 8px; }
+  .m-card { background: var(--surface); border: 1px solid var(--ring); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; }
+  .m-card-t { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+  .m-card-t .chev { margin-left: auto; color: var(--muted); font-size: 18px; }
+  .m-kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 6px 0 0; font-size: 13px; }
+  .m-kv dt { color: var(--muted); }
+  .m-kv dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+}
