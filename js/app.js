@@ -1,6 +1,6 @@
 import { legacyOpen } from './crypto.js';
 import { parseBookmarks, SEP } from './bookmarks.js';
-import { COLLECTIONS, SECTIONS, VIEWS, DAYS, num, whenText, isUS } from './schemas.js';
+import { COLLECTIONS, SECTIONS, VIEWS, DAYS, num, whenText, isUS, BROKERS } from './schemas.js';
 import * as store from './store.js';
 import { decide, applyFill, todayInputs, simulate, ma200Line, levels, TP, N } from './swing.js';
 import { initTasks, tasksHtml, tasksMount, forgetGoogleToken, refreshTasks } from './tasks.js';
@@ -460,10 +460,28 @@ async function seedBookmarks() {
 
 // ---------- 앱 ----------
 
+// 이 기기에서 마지막으로 본 화면 (localStorage, 기기마다 따로 · S.data에는 안 넣음). 예: #/assets/stocks
+const LAST_ROUTE = 'hub.lastRoute';
+// 앱 주소면 바르게 정리한 주소, 아니면 null (없는 메뉴·탭)
+function routeOf(hash) {
+  const m = String(hash || '').match(/^#\/([a-z]+)(?:\/([a-z]+))?$/);
+  const s = m && SECTIONS.find(x => x.id === m[1]);
+  if (!s) return null;
+  if (!s.tabs) return m[2] ? null : `#/${s.id}`;
+  if (m[2] && !s.tabs.includes(m[2])) return null;
+  return `#/${s.id}/${m[2] || s.tabs[0]}`;
+}
+// 처음 열 때 주소: 주소에 화면이 적혀 있으면 그것 (공유 링크 등). 없거나 기본(할 일·예전 홈·앱 시작 주소)이면 마지막으로 본 화면, 그것도 없으면 할 일
+function startRoute() {
+  const h = location.hash;
+  if (h.startsWith('#/') && !/^#\/?(tasks|home)?\/?$/.test(h)) return h;
+  return routeOf(lsGet(LAST_ROUTE)) || '#/tasks';
+}
+
 function enterApp() {
   $('#lock').hidden = true;
   $('#app').hidden = false;
-  history.replaceState(null, '', location.pathname + (location.hash.startsWith('#/') ? location.hash : '#/tasks'));
+  history.replaceState(null, '', location.pathname + startRoute());
   render();
   renderSync();
   store.sessionInfo().then(si => { ui.session = si; armIdle(); });
@@ -546,6 +564,9 @@ function render() {
   if (!S.data) return;
   // 예전 홈 주소(#/home)는 할 일로
   if (/^#\/?home(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + '#/tasks');
+  // 마지막으로 본 화면 기억 (앱이 열려 있을 때만 그려지므로 잠금·연결 화면은 안 남음)
+  const seen = routeOf(location.hash);
+  if (seen && !$('#app').hidden) lsSet(LAST_ROUTE, seen);
   const { s, tab } = parseRoute();
   $('#nav').innerHTML = SECTIONS.map(x => `<a href="#/${x.id}" class="${x.id === s.id ? 'on' : ''}">${x.title}</a>`).join('');
   const v = $('#view');
@@ -615,16 +636,18 @@ function sectionHtml(s, tab) {
     <div class="toolbar">
       <input type="search" class="search" data-q="${tab}" placeholder="${def.title} 검색" value="${esc(ui.q[tab] || '')}">
       <span class="sums">${sums.join('<span class="dot">·</span>')}</span>
-      <button class="btn primary" type="button" data-act="add" data-key="${tab}">+ 추가</button>
+      ${tab === 'stocks'
+        ? '<button class="btn primary" type="button" data-act="qt">매매 넣기</button><button class="btn ghost small" type="button" data-act="add" data-key="stocks">+ 종목 직접 추가</button>'
+        : `<button class="btn primary" type="button" data-act="add" data-key="${tab}">+ 추가</button>`}
     </div>
     <div id="tbl">${tableHtml(tab)}</div>`;
-  // 휴대폰 주식: 자산 탭 줄 → 지금 할 일 카드들 → 차트 카드. 주식 원장은 맨 아래 "고급"에 접어 둠
+  // 휴대폰 주식: 자산 탭 줄 → 지금 할 일 카드들 → 차트 카드. 주식 원장·한꺼번에 넣기는 맨 아래 "보유·기록 관리"에 접어 둠
   if (tab === 'stocks' && isMobile()) {
     return `<h1 class="sr-only">${s.title}</h1>
     ${tabsHtml(s, tab)}
     ${swingHtml()}
     <details class="card m-fold m-adv" ${foldAttr('stocks-adv')}>
-      <summary>고급 · 평소엔 안 건드려도 돼요</summary>
+      <summary>보유·기록 관리</summary>
       <div class="m-adv-body">
         <div class="row"><button type="button" class="btn" data-act="trade-import">실제 매매 한꺼번에 넣기</button></div>
         <h4 class="m-adv-h">주식 원장 <small class="muted">계좌·수량·평단</small></h4>
@@ -702,6 +725,7 @@ function mobileCardsHtml(key, def, cols, rows, sort, counts) {
 // ----- 음봉 단타 (주식 탭 위 "오늘 할 일") -----
 
 // 규칙에 넘기는 보유 = 규칙 포지션 (예외 매매를 뺀 것). 예외가 없으면 주식 목록의 보유 그대로
+const DEFAULT_BROKER = BROKERS[0]; // 미래에셋증권 (새 종목 기본값)
 const swingParams = r => { const rp = rulePos(r); return { ...(ui.swing[r.id] || {}), account: r.account, units: rp.units, qty: rp.qty, avg: rp.avg, us: isUS(r) }; };
 
 // 오늘 할 일에 나올 종목: 비율을 적용한 종목. 아직 적용 전이면 팝업에 보이는 비율(저장한 값이나 기본값)로 미리 보여준다
@@ -710,22 +734,10 @@ const swingList = () => (swingReal().length ? swingReal() : planChartRows());
 const isPreview = r => String(r.id).startsWith('plan-');
 
 function swingResultHtml(r) {
-  const p = swingParams(r), d = decide(p);
+  const o = orderLines(r);
   const label = { tp: '익절 체결', sl: '손절 체결', buy: '매수 체결' };
-  const fills = d.orders.length && !isPreview(r) ? `<div class="row">${d.orders.map((o, i) => `<button type="button" class="btn small" data-act="sw-fill" data-id="${r.id}" data-i="${i}">${label[o.kind]}했어요</button>`).join('')}</div>` : '';
-  if (!isMobile()) return `<p class="sw-text ${d.action}">${esc(d.text)}</p>
-    ${fills}`;
-  // 휴대폰: 할 일을 큰 글씨 한 줄로 (주문마다) → 언제·어떻게 → 규칙 문구 → 체결 버튼
-  const us = p.us, ready = num(p.account) && num(p.open) && num(p.close);
-  // 국내인데 종가(예상체결가)를 아직 모르면: 오늘 시가만으로 LOC 주문을 미리 보여줌 (종가가 나오면 아래 원래 결정으로)
-  if (!us && num(p.account) && num(p.open) && !num(p.close)) return krLocPlanHtml(p) + `<p class="sw-text ${d.action} m-detail sr-only">${esc(d.text)}</p>`;
-  const big = o => (us
-    ? { buy: `${fmtNum(o.qty)}주 매수 · ${fmtUsd(o.price)}까지`, tp: `${fmtNum(o.qty)}주 익절 매도 · ${fmtUsd(o.price)}`, sl: `${fmtNum(o.qty)}주 전량 손절 매도` }
-    : { buy: `${fmtNum(o.qty)}주 매수`, tp: `${fmtNum(o.qty)}주 전량 익절 매도`, sl: `${fmtNum(o.qty)}주 전량 손절 매도` })[o.kind];
-  const how = !d.orders.length ? '' : us ? `20:00 ${d.order === 'MOC' ? 'MOC' : 'LOC'}로 주문` : `15:20 동시호가로 주문 · 예상체결가 ${fmtWon(p.close)} 기준`;
-  return `${d.orders.length ? d.orders.map(o => `<div class="m-big ${o.kind}">${esc(big(o))}</div>`).join('') : `<div class="m-big rest">${ready ? '쉼' : '값을 넣어 주세요'}</div>`}
-    ${how ? `<div class="m-how">${esc(how)}</div>` : ''}
-    <p class="sw-text ${d.action} m-detail">${esc(d.text)}</p>
+  const fills = o.d.orders.length && !isPreview(r) ? `<div class="row">${o.d.orders.map((x, i) => `<button type="button" class="btn small" data-act="sw-fill" data-id="${r.id}" data-i="${i}">${label[x.kind]}했어요</button>`).join('')}</div>` : '';
+  return `${ordersFaceHtml(o)}
     ${fills}`;
 }
 
@@ -741,25 +753,89 @@ function krLocQty(p, price, k) {
   const cap = Math.floor(cash / price + 1e-9);
   return Math.min(Math.max(1, want), cap);
 }
-function krLocPlanHtml(p) {
+// 오늘 시가만으로 정해지는 국내 LOC 주문: { buyPx: 시가 − 1호가, q: 살 주식 수(0이면 안 삼), k: 살 칸, why: 안 사는 까닭, tpPx: 익절 LOC 값(평단 × 1.05 호가 올림), sl: 손절가 }
+function krLoc(p) {
   const open = num(p.open), units = Math.round(num(p.units)), qty = num(p.qty), avg = num(p.avg);
   const held = qty > 0 && avg > 0, k = Math.min(2, N - units);
-  const buyPx = open - krTick(open - 1);
+  const buyPx = open ? open - krTick(open - 1) : 0;
   const tpPx = held ? ceilTick(avg * TP) : null, sl = held ? levels(avg).sl : null;
-  const out = [];
-  if (held) out.push(`<div class="m-big tp">${fmtNum(qty)}주 익절 주문</div><div class="m-how">15:20 전에 LOC로 매도 · ${fmtWon(tpPx)} <small>(평단 × 1.05, 올림)</small></div>`);
-  let why = '';
+  let why = '', q = 0;
   if (!p.maUp) why = '200일선이 내려가는 중이라 새로 사지 않음';
   else if (k <= 0) why = '투자금을 다 써서(100%) 더 사지 않음';
   else if (held && buyPx >= tpPx) why = '익절 주문만 (같은 날 사고팔지 않음)';
-  else {
-    const q = krLocQty(p, buyPx, k);
-    if (q < 1) why = '현금이 모자라 살 수 없음';
-    else out.push(`<div class="m-big buy">음봉이면 ${fmtNum(q)}주 매수</div><div class="m-how">15:20 전에 LOC(동시호가)로 주문 · ${fmtWon(buyPx)}</div><p class="m-sub">시가 ${fmtWon(open)} − 1호가 · 종가가 이 가격 이하일 때만 체결</p>`);
+  else if (buyPx) { q = krLocQty(p, buyPx, k); if (q < 1) { q = 0; why = '현금이 모자라 살 수 없음'; } }
+  return { open, held, qty, units, k, buyPx, q, why, tpPx, sl };
+}
+// 안 사는 까닭을 짧게 (카드 한 줄용)
+const SHORT_WHY = [[/양봉/, '양봉'], [/200일선이 내려가는/, '200일선 내려가는 중'], [/100%/, '100% 다 삼'], [/현금이 모자라/, '현금 모자람'], [/익절 주문만/, '익절 주문만'], [/넣으세요/, '값을 넣어 주세요'], [/계좌 금액/, '투자금 없음']];
+const shortWhy = t => SHORT_WHY.find(([re]) => re.test(t))?.[1] || t;
+// 카드·PC 오늘 할 일·오늘 줄에 같은 것: 주문마다 한 줄 "언제 · 방법 주식 수 · 값" + 채움 "현재 X% / 100% · 오늘 ±Y%"
+//   국내 (KRX): 매수 = LOC 시가 − 1호가 (시가만 알면 정해짐) · 갖고 있으면 매일 익절 LOC · 예상체결가 ≤ 손절가면 15:20 시장가 매도
+//   미국: swing.js decide 그대로 (20:00 LOC · 손절 MOC)
+function orderLines(r) {
+  const p = swingParams(r), d = decide(p), units = Math.round(num(p.units)), lines = [];
+  if (p.us) {
+    for (const o of d.orders) lines.push(o.kind === 'sl' ? { kind: 'sl', time: '20:00', how: 'MOC 매도', qty: o.qty, delta: -units * 20 }
+      : { kind: o.kind, time: '20:00', how: `LOC ${o.side === 'buy' ? '매수' : '매도'}`, qty: o.qty, price: fmtUsd(o.price), delta: o.side === 'buy' ? o.units * 20 : -units * 20 });
+    return { p, d, units, lines, why: lines.length ? '' : shortWhy(d.text) };
   }
-  if (why) out.push(held ? `<p class="m-sub m-why-line">${why}</p>` : `<div class="m-big rest">쉼</div><p class="m-sub m-why-line">${why}</p>`);
-  if (held) out.push(`<p class="m-sl">15:20에 예상체결가가 ${fmtWon(sl)}(평단 × 0.85) 이하면 동시호가 시장가 매도 · LOC 매수는 취소</p>`);
-  return out.join('');
+  if (!num(p.account)) return { p, d, units, lines, why: '투자금 없음' };
+  if (!num(p.open)) return { p, d, units, lines, why: '시가 기다리는 중' };
+  const L = krLoc(p), close = num(p.close);
+  if (close && L.held && close <= L.sl) return { p, d, units, lines: [{ kind: 'sl', time: '15:20', how: '시장가 매도', qty: L.qty, delta: -units * 20 }], why: '' };
+  if (L.held) lines.push({ kind: 'tp', time: '15:20까지', how: 'LOC 매도', qty: L.qty, price: fmtWon(L.tpPx), delta: -units * 20 });
+  let why = L.why;
+  if (close) {
+    // 종가(예상체결가)를 알면 그날 규칙대로 (사는 양은 decide 그대로, 값은 LOC 값)
+    const ob = d.orders.find(o => o.kind === 'buy');
+    if (ob && !(L.held && L.buyPx >= L.tpPx)) lines.push({ kind: 'buy', time: '15:20까지', how: 'LOC 매수', qty: ob.qty, price: fmtWon(L.buyPx), delta: ob.units * 20 });
+    else if (!ob && !d.orders.length) why = d.text;
+  } else if (L.q) lines.push({ kind: 'buy', time: '15:20까지', how: 'LOC 매수', qty: L.q, price: fmtWon(L.buyPx), delta: L.k * 20 });
+  const rank = { buy: 0, tp: 1, sl: 2 };
+  lines.sort((x, y) => rank[x.kind] - rank[y.kind]); // 매수 줄 먼저
+  return { p, d, units, lines, why: lines.length ? '' : shortWhy(why) };
+}
+const signPct = v => `${v >= 0 ? '+' : '−'}${Math.abs(v)}%`;
+// 카드 색: 손절(보라) > 매수(초록) > 익절(주황) > 쉼(회청색)
+const STATE_LABEL = { buy: '매수', tp: '익절', sl: '손절', rest: '쉼' };
+const cardState = o => (o.lines.some(x => x.kind === 'sl') ? 'sl' : o.lines.some(x => x.kind === 'buy') ? 'buy' : o.lines.some(x => x.kind === 'tp') ? 'tp' : 'rest');
+const stateLabel = o => (o.lines.length ? [...new Set(o.lines.map(x => STATE_LABEL[x.kind]))].join(' · ') : '쉼');
+// 입력이 바뀌면 카드 색·꼬리표도 (휴대폰)
+function paintState(box, r) {
+  const slot = box.closest('.m-slot');
+  if (!slot) return;
+  const o = orderLines(r);
+  slot.dataset.state = cardState(o);
+  const b = slot.querySelector('.m-state');
+  if (b) b.textContent = stateLabel(o);
+}
+function ordersFaceHtml(o) {
+  const line = x => `<span class="ord ${x.kind}"><span class="ord-t">${x.time}</span> · ${x.how} <b class="ord-q">${fmtNum(x.qty)}주</b>${x.price ? ` · <b class="ord-p">${esc(x.price)}</b>` : ''}</span>`;
+  const deltas = [...new Set(o.lines.map(x => x.delta))].sort((x, y) => y - x); // +먼저: "오늘 +40% 또는 −40%"
+  const fill = `<span class="ord-fill">현재 <b>${o.units * 20}%</b> / 100%${deltas.length ? ` · 오늘 ${deltas.map(v => `<b>${signPct(v)}</b>`).join(' 또는 ')}` : ''}</span>`;
+  return `<div class="sw-text sw-ords ${o.d.action}">${o.lines.length ? o.lines.map(line).join('') : `<span class="ord rest"><span class="ord-badge">쉼</span> 오늘 주문 없음 · ${esc(o.why)}</span>`}${fill}</div>`;
+}
+// 국내 규칙 문구 (swing.js decide의 글자를 LOC 방식으로) — "왜 이 주문인가요?" 안에서만
+function krText(p, d) {
+  if (p.us) return d.text;
+  const L = krLoc(p), o = d.orders[0];
+  if (num(p.account) && num(p.open) && !num(p.close)) return L.q ? `음봉이면 ${fmtNum(L.q)}주 매수 (투자금의 ${L.k * 20}%어치 → 합계 ${(L.units + L.k) * 20}%)` : L.why;
+  if (!o) return d.text;
+  if (o.kind === 'buy') return d.text.replace(/^음봉: 15:20 동시호가로 ([\d,]+)주 매수/, '음봉: $1주 매수');
+  if (o.kind === 'tp') return `익절: ${fmtNum(o.qty)}주 전량 매도 (종가가 익절가 이상)`;
+  return d.text.replace(/^손절: 15:20 동시호가로 ([\d,]+)주 전량 매도 \(손절가 ([^)]*)\)/, '손절: $1주 전량 매도 (예상체결가가 손절가 $2 이하)');
+}
+// "왜 이 주문인가요?" 안의 설명 (입력이 바뀌면 같이 바뀜)
+function whyInfoHtml(r) {
+  const o = orderLines(r), p = o.p, cur = p.us ? '$' : '', rp = rulePos(r), out = [krText(p, o.d)];
+  if (!p.us && num(p.open)) {
+    const L = krLoc(p);
+    out.push(`LOC 매수 = 시가 ${fmtWon(L.open)} − 1호가 · 종가가 이 가격 이하일 때만 체결`);
+    if (num(p.close)) out.push(`예상체결가 ${fmtWon(p.close)}`);
+    if (L.held) out.push(`15:20에 예상체결가가 ${fmtWon(L.sl)}(평단 × 0.85) 이하면 동시호가 시장가 매도 · LOC 매수는 취소`);
+  }
+  out.push(`${num(rp.qty) ? `${fmtNum(rp.qty)}주 평단 ${fmtMoney(rp.avg, cur)} · ` : ''}투자금 ${fmtMoney(num(r.account), cur)}`);
+  return out.map(x => `<p>${esc(x)}</p>`).join('');
 }
 
 // 단타 종목과 비중 기본값. 사용자가 고친 값은 sys.swingPlan에 저장한다
@@ -961,7 +1037,7 @@ async function swingSetup(f) {
   const changed = rows.map(x => {
     const won = total * x.pct / 100, us = isUS(x);
     let r = find(x);
-    if (!r) { r = { id: uid(), name: x.name, code: x.code, market: us ? '해외' : '국내', qty: 0, avg: 0, units: 0 }; items('stocks').push(r); }
+    if (!r) { r = { id: uid(), broker: DEFAULT_BROKER, name: x.name, code: x.code, market: us ? '해외' : '국내', qty: 0, avg: 0, units: 0 }; items('stocks').push(r); }
     const account = us ? Math.round(won / fx * 100) / 100 : Math.round(won);
     Object.assign(r, { code: r.code || x.code, account }, us ? { fx } : {});
     // 이미 갖고 있는 주식은 이번 묶음으로 본다: 들어간 돈 ÷ 1칸 금액 (1~5칸). 칸이 다 차면 더 사지 않고 익절·손절만 기다림
@@ -996,9 +1072,12 @@ const SWING_RULES = `<div class="rules">
 
   <h3>판단 순서</h3>
   <ol class="rule-steps">
-    <li><b>갖고 있으면 먼저 팔기</b> — 종가 ≥ <b>평단 × 1.05</b>면 전량 익절, 종가 ≤ <b>평단 × 0.85</b>면 전량 손절. 판 날은 사지 않아요.</li>
-    <li><b>아니면 사기</b> — 200일선이 오르는 중이고, 음봉(종가 &lt; 시가)이고, 아직 <b>100%</b>가 아니면 투자금의 <b>40%</b>어치 (20%만 남았으면 <b>20%</b>).</li>
+    <li>갖고 있고, 종가 ≥ <b>평단 × 1.05</b> → <b>익절</b> (전부 팔기) · 끝</li>
+    <li>갖고 있고, 종가 ≤ <b>평단 × 0.85</b> → <b>손절</b> (전부 팔기) · 끝</li>
+    <li>위 둘이 아니면 → 200일선 오르는 중 + 음봉(종가 &lt; 시가) + 투자금 100% 안 채움 → <b>매수</b> (<b>40%</b>, 20%만 남았으면 <b>20%</b>)</li>
+    <li>아니면 → <b>쉼</b></li>
   </ol>
+  <p class="muted small rule-note">익절·손절은 같은 날 둘 다 해당될 수 없어요 · 판 날은 사지 않아요</p>
   <p class="rule-alt"><b>200일선 오르는 중</b> — 200일선(금색 선)이 <b>20거래일 전(약 한 달 전)의 200일선 값</b>보다 같거나 높으면 '오르는 중'이에요. <small class="muted">20일선이 아니에요 · 주가가 200일선 위에 있을 필요는 없어요</small></p>
 
   <h3>투자금 나누기</h3>
@@ -1100,7 +1179,7 @@ function swingItemHtml(r) {
 }
 
 // ----- 휴대폰 주식 화면 -----
-// 위: "지금 할 일" 큰 카드(15:30 전엔 국내, 그 뒤엔 미국) → 다른 시장 카드 → 차트(칩은 차트 종목만 고름) → 고급
+// 위: 종목마다 "지금 할 일" 큰 카드 (20:00 전엔 국내 먼저, 20:00부터 미국 먼저) → 차트(칩은 차트 종목만 고름) → 고급
 const SLOT = { kr: { at: 15 * 60 + 20, hm: '15:20', name: '국내' }, us: { at: 20 * 60, hm: '20:00', name: '미국' } };
 const kstMin = () => { const z = zoned('Asia/Seoul'); return { m: z.h * 60 + Number(z.hm.slice(3)), wd: z.wd }; };
 function slotTime(k) {
@@ -1108,24 +1187,22 @@ function slotTime(k) {
   if (wd === 0 || wd === 6) return '주말 · 장이 쉬어요';
   const left = SLOT[k].at - m;
   if (left > 0) return `${SLOT[k].hm}까지 ${left >= 60 ? `${Math.floor(left / 60)}시간 ` : ''}${left % 60}분`;
-  if (k === 'kr' && m < 15 * 60 + 30) return '지금 동시호가 (15:30 체결)';
-  return `오늘 ${SLOT[k].hm} 주문 시간 지남`;
+  if (k === 'kr') return m < 15 * 60 + 30 ? '지금 동시호가 (15:30 체결)' : '오늘 장 마감 (15:30)';
+  return '지금 주문';
 }
 // 남은 시간 글자는 30초마다 고침 (카드 순서는 다음에 화면을 그릴 때 바뀜)
 setInterval(() => document.querySelectorAll('[data-slot-time]').forEach(el => { el.textContent = slotTime(el.dataset.slotTime); }), 30e3);
 
 function swingMobileHtml(list, r, preview) {
   const kr = list.filter(x => !isUS(x)), us = list.filter(x => isUS(x));
-  const krFirst = kstMin().m < 15 * 60 + 30;
-  const slots = (krFirst ? [['kr', kr], ['us', us]] : [['us', us], ['kr', kr]]).filter(([, l]) => l.length);
-  const card = ([k, l], hero) => `<section class="card m-slot${hero ? ' m-hero' : ''}" data-slot="${k}">
-      ${hero
-        ? `<div class="m-band"><span>지금 할 일 · ${SLOT[k].name}</span><span data-slot-time="${k}">${slotTime(k)}</span></div>`
-        : `<div class="m-slot-h"><b>${k === 'us' ? '오늘 저녁 20:00 · 미국' : '국내 · 15:20 동시호가'}</b><span class="muted small" data-slot-time="${k}">${slotTime(k)}</span></div>`}
-      <div class="m-rows">${l.map(x => swingRowMobileHtml(x)).join('')}</div>
-    </section>`;
+  // 종목마다 같은 큰 카드. 순서만 시간 따라: 20:00 전엔 국내 → 미국(비율 입력 순서), 20:00부터는 미국 → 국내
+  const order = kstMin().m >= 20 * 60 ? [...us, ...kr] : [...kr, ...us];
+  const card = x => { const k = isUS(x) ? 'us' : 'kr', o = orderLines(x); return `<section class="card m-slot m-hero" data-slot="${k}" data-state="${cardState(o)}">
+      <div class="m-band"><span>${SLOT[k].name} <span class="m-state">${stateLabel(o)}</span></span><span data-slot-time="${k}">${slotTime(k)}</span></div>
+      <div class="m-rows">${swingRowMobileHtml(x)}</div>
+    </section>`; };
   return `<div class="swing m-swing" role="region" aria-label="오늘 할 일 · 음봉 단타"${preview ? ' data-preview' : ''}>
-    ${slots.map((x, i) => card(x, i === 0)).join('')}
+    ${order.map(card).join('')}
     <section class="card chart-card m-chart">
       ${swBtnsHtml()}
       ${swChipsHtml(list, r)}
@@ -1138,13 +1215,11 @@ function swingMobileHtml(list, r, preview) {
 // 휴대폰 한 종목 줄: 이름·보유 → 할 일(큰 글씨)·체결 버튼 → 직접 기록 → "왜 이 주문인가요?" 안에 입력칸
 function swingRowMobileHtml(r) {
   const us = isUS(r), v = ui.swing[r.id] || {}, cur = us ? '$' : '';
-  const rp = rulePos(r), units = Math.round(num(rp.units));
   const k = 'why-' + r.id;
   // 기본은 접어 둠 (국내는 시가만으로 LOC 주문이 정해짐 · 15:20에 예상체결가로 직접 볼 때만 펼침). 직접 열고 닫았으면 그대로
   const open = !!ui.fold[k];
   return `<div class="sw-item m-row" data-sw="${r.id}">
-    <div class="m-row-h"><b>${esc(r.name)}</b>
-      <span class="muted small">${units ? `투자금의 ${units * 20}% 샀음 · ` : ''}${num(rp.qty) ? `${fmtNum(rp.qty)}주 평단 ${fmtMoney(rp.avg, cur)} · ` : ''}투자금 ${fmtMoney(num(r.account), cur)}</span>${exTag(r, cur)}</div>
+    <div class="m-row-h"><b>${esc(r.name)}</b>${exTag(r, cur)}</div>
     <div class="sw-result">${swingResultHtml(r)}</div>
     <button type="button" class="m-link" data-act="trade" data-id="${r.id}" data-t="${ymd()}">다르게 체결했으면 직접 기록 ›</button>
     <details class="m-fold m-why" data-fold="${k}"${open ? ' open' : ''}>
@@ -1156,6 +1231,7 @@ function swingRowMobileHtml(r) {
       </div>
       <p class="m-ma muted small">${esc(MA_UP_HINT)}</p>
       <p class="sw-auto muted small" data-sw-auto="${r.id}">${esc(v.autoNote || '')}</p>
+      <div class="m-why-info muted small" data-why-info="${r.id}">${whyInfoHtml(r)}</div>
     </details>
   </div>`;
 }
@@ -1212,6 +1288,9 @@ async function autofillSwing(list) {
     box.querySelector('.sw-auto').textContent = note;
     box.querySelector('[data-sw-tip]')?.setAttribute('title', note);
     box.querySelector('.sw-result').innerHTML = swingResultHtml(r);
+    const wi = box.querySelector('[data-why-info]');
+    if (wi) wi.innerHTML = whyInfoHtml(r);
+    paintState(box, r);
     updateTodayRow(r.id);
   }
 }
@@ -1635,7 +1714,7 @@ function ensurePlanRecords() {
   const plan = swingPlan(), out = [];
   for (const x of planChartRows()) {
     let rec = stockRecOf(x.code) || items('stocks').find(y => y.name === x.name);
-    if (!rec) { rec = { id: uid(), name: x.name, code: x.code, market: isUS(x) ? '해외' : '국내', qty: 0, avg: 0, units: 0 }; items('stocks').push(rec); }
+    if (!rec) { rec = { id: uid(), broker: DEFAULT_BROKER, name: x.name, code: x.code, market: isUS(x) ? '해외' : '국내', qty: 0, avg: 0, units: 0 }; items('stocks').push(rec); }
     if (!rec.code) rec.code = x.code;
     if (!num(rec.account)) Object.assign(rec, { account: x.account }, isUS(x) && num(plan.fx) ? { fx: num(plan.fx) } : {});
     out.push(rec);
@@ -1651,7 +1730,7 @@ function linkHoldings(r) {
   rec = stockRecOf(r.code);
   if (!rec) {
     if (!trades.length) return made;
-    rec = { id: uid(), name: r.name, code: r.code, market: isUS(r) ? '해외' : '국내', qty: 0, avg: 0, units: 0, account: num(r.account) || '' };
+    rec = { id: uid(), broker: DEFAULT_BROKER, name: r.name, code: r.code, market: isUS(r) ? '해외' : '국내', qty: 0, avg: 0, units: 0, account: num(r.account) || '' };
     items('stocks').push(rec);
   }
   if (!rec.tradeBase && !trades.length) return made;
@@ -2046,6 +2125,95 @@ function openImport() {
   cellAt(0, 0).focus();
 }
 
+// ----- 매매 넣기 (간단): 고른 종목 · 매수/매도 · 주식 수 · 단가 (날짜·증권사는 접어 둠) → 실제 매매 기록 (openTrade와 같은 길) -----
+// 종목코드·국내/해외는 종목에서 자동 · 매도 구분은 지금 평단보다 비싸면 익절, 아니면 손절 (고칠 수 있음) · 하루 한 기록
+function openQuickTrade() {
+  const opts = chartRows.filter(x => x.code);
+  if (!opts.length) return toast('먼저 종목별 비율 입력으로 종목을 넣어 주세요.', true);
+  const st = { r: chartRows.find(x => x.id === ui.chartId && x.code) || opts[0], side: 'buy', kindSet: false };
+  const draw = () => {
+    const r = st.r, us = isUS(r), rec = stockRecOf(r.code), broker = rec?.broker || DEFAULT_BROKER;
+    mform.innerHTML = `
+      <h2>매매 넣기</h2>
+      <div class="qt-stock"><b>${esc(r.name)}</b> <small class="muted">${esc(r.code)} · ${us ? '해외' : '국내'}</small>
+        ${opts.length > 1 ? `<details class="qt-change"><summary>바꾸기</summary><div class="chip-row">${opts.map(x => `<button type="button" class="chip${x.code === r.code ? ' on' : ''}" data-qt-code="${esc(x.code)}">${esc(x.name)}</button>`).join('')}</div></details>` : ''}</div>
+      <div class="qt-side" role="group" aria-label="매수·매도">
+        <button type="button" class="qt-btn buy${st.side === 'buy' ? ' on' : ''}" data-qt-side="buy" aria-pressed="${st.side === 'buy'}">매수</button>
+        <button type="button" class="qt-btn sell${st.side === 'sell' ? ' on' : ''}" data-qt-side="sell" aria-pressed="${st.side === 'sell'}">매도</button>
+      </div>
+      <div class="fields">
+        <label class="field"><span>주식 수</span><input name="qty" type="number" step="any" inputmode="decimal" required></label>
+        <label class="field"><span>단가 (${us ? '$' : '원'})</span><input name="price" ${us ? 'type="number" step="any" inputmode="decimal"' : 'type="text" inputmode="numeric"'} required></label>
+        <label class="field qt-kind"${st.side === 'sell' ? '' : ' hidden'}><span>매도 구분</span><select name="kind"><option value="tp">익절</option><option value="sl">손절</option></select></label>
+      </div>
+      <details class="qt-more"><summary>날짜 <b id="qt-day">${ymd()} (오늘)</b></summary><label class="field"><span>날짜</span><input name="t" type="date" value="${ymd()}" required></label></details>
+      <details class="qt-more"><summary>증권사 <b>${esc(broker)}</b></summary><label class="field"><span>증권사</span><input name="broker" type="text" list="dl-qt-broker" value="${esc(broker)}" autocomplete="off"><datalist id="dl-qt-broker">${BROKERS.map(o => `<option value="${esc(o)}">`).join('')}</datalist></label></details>
+      <label class="check"><input type="checkbox" name="ex"> 예외 (규칙 밖 매매)</label>
+      <p class="qt-warn" id="qt-warn" hidden></p>
+      <dl class="trade-calc"><dt>금액</dt><dd id="qt-amt">—</dd><dt>저장하면 보유</dt><dd id="qt-hold">—</dd></dl>
+      <div class="modal-actions"><span class="spacer"></span>
+        <button type="button" class="btn" data-m="close">취소</button>
+        <button class="btn primary" type="submit">저장</button>
+      </div>`;
+    calc();
+  };
+  const el = () => mform.elements;
+  function calc() {
+    const r = st.r, us = isUS(r), cur = us ? '$' : '', rec = stockRecOf(r.code);
+    const q = num(el().qty.value), px = num(el().price.value), t = el().t.value;
+    if (st.side === 'sell' && !st.kindSet && px) el().kind.value = px > num(rec?.avg ?? r.avg) ? 'tp' : 'sl';
+    const kind = st.side === 'buy' ? 'buy' : el().kind.value;
+    $('#qt-amt').textContent = q && px ? fmtMoney(q * px, cur) : '—';
+    $('#qt-day').textContent = t === ymd() ? `${t} (오늘)` : t;
+    const same = tradesOf(r).find(y => y.t === t);
+    const w = $('#qt-warn');
+    w.hidden = !same;
+    w.innerHTML = same ? `이 날 기록 있음 (${esc(KIND[same.kind])} ${fmtNum(same.qty)}주 ${esc(fmtMoney(same.price, cur))}) <button type="button" class="btn small" data-qt-fix>고치기</button>` : '';
+    mform.querySelector('[type=submit]').disabled = !!same;
+    const pend = [...tradesOf(r).filter(y => y.t !== t), ...(t && q && px ? [{ t, kind, qty: q, price: px }] : [])];
+    const hb = baseFor(rec, pend);
+    $('#qt-hold').textContent = pend.length ? holdText(holdingsFrom(hb, pend, rec?.account ?? r.account, us), cur) : '—';
+  }
+  mform.oninput = e => {
+    if (e.target.name === 'price' && !isUS(st.r)) commaInput(e.target);
+    calc();
+  };
+  mform.onchange = e => { if (e.target.name === 'kind') st.kindSet = true; calc(); };
+  mform.onclick = e => {
+    const c = e.target.closest('[data-qt-code], [data-qt-side], [data-qt-fix], [data-m]');
+    if (!c) return;
+    if (c.dataset.m === 'close') return modal.close();
+    if (c.dataset.qtFix != null) { const t = el().t.value; modal.close(); return openTrade(st.r.id, t); }
+    const keep = { qty: el().qty.value, price: el().price.value, t: el().t.value, ex: el().ex.checked };
+    if (c.dataset.qtCode) { st.r = opts.find(x => x.code === c.dataset.qtCode) || st.r; keep.price = ''; }
+    if (c.dataset.qtSide) { st.side = c.dataset.qtSide; st.kindSet = false; }
+    draw();
+    Object.assign(el().qty, { value: keep.qty }); el().price.value = keep.price; el().t.value = keep.t; el().ex.checked = keep.ex;
+    calc();
+  };
+  mform.onsubmit = async e => {
+    e.preventDefault();
+    const r = st.r, us = isUS(r);
+    const rec0 = { t: el().t.value, kind: st.side === 'buy' ? 'buy' : el().kind.value, qty: num(el().qty.value), price: num(el().price.value), ...(el().ex.checked ? { ex: true } : {}) };
+    if (!rec0.t || !(rec0.qty > 0) || !(rec0.price > 0)) return toast('주식 수·단가를 넣어주세요.', true);
+    if (tradesOf(r).some(y => y.t === rec0.t)) return toast('이 날 기록이 있어요. "고치기"로 바꿔 주세요.', true);
+    const broker = el().broker.value.trim();
+    S.data.sys.trades = { ...S.data.sys.trades, [r.code]: byDate([...tradesOf(r), rec0]) };
+    const recs = linkHoldings(r);
+    const h = stockRecOf(r.code);
+    if (h && broker && h.broker !== broker) h.broker = broker;
+    await store.changed('stocks', [...new Set([...recs, ...(h ? [h] : [])])]);
+    await store.changedSys();
+    modal.close();
+    if (h && h.id !== r.id && isPreview(r)) ui.chartId = h.id;
+    render();
+    toast(`${r.name} ${KIND[rec0.kind]} ${fmtNum(rec0.qty)}주를 넣었어요.${h ? ` 보유: ${holdText(h, us ? '$' : '')}` : ''}`);
+  };
+  modal.addEventListener('close', () => { resetModalHandlers(); mform.onclick = null; mform.onsubmit = null; }, { once: true });
+  draw();
+  if (!modal.open) modal.showModal();
+}
+
 // 기간 = 시작일 뒤 처음 산 날 ~ 마지막 날. 실제 매매 수익 = 판 것만 (실현 손익, ÷ 금액 = %).
 // 그냥 보유 = 같은 기간에 처음 산 날 종가로 사서 들고 있었을 때
 function periodOf(rows, res, data, amount) {
@@ -2114,7 +2282,7 @@ function simResultHtml(r, res, data, amount, rows) {
     <div class="row sim-tools"><label class="check sim-virt"><input type="checkbox" data-virt${showVirtual() ? ' checked' : ''}> 가상 데이터 표시</label>
       <span class="spacer"></span><button type="button" class="btn small" data-act="trade-import">실제 매매 한꺼번에 넣기</button></div>
     ${table(shown.map(e => `<tr class="${e.real ? 'real' : ''}" data-act="trade" data-id="${r.id}" data-t="${e.t}" tabindex="0" title="눌러서 이날 실제 매매 넣기·고치기">
-        <td>${e.t}</td><td><span class="kind ${e.kind}">${KIND[e.kind]}</span>${e.real ? '<span class="real-tag">실제</span>' : ''}${e.ex ? '<span class="ex-tag">예외</span>' : ''}${e.pre ? ' <small class="muted pre-tag">시작일 전</small>' : ''}</td><td class="muted small">${how(e)}</td>
+        <td>${e.t}</td><td><span class="kind ${e.kind}">${KIND[e.kind]}</span>${e.real ? '<span class="real-tag">실제</span>' : '<span class="virt-tag">가상</span>'}${e.ex ? '<span class="ex-tag">예외</span>' : ''}${e.pre ? ' <small class="muted pre-tag">시작일 전</small>' : ''}</td><td class="muted small">${how(e)}</td>
         <td class="num">${fmtNum(e.qty)}</td><td class="num">${fmtMoney(e.price, cur)}</td><td class="num">${fmtMoney(e.amount, cur)}</td>
         <td class="num">${e.pnl == null ? '' : `<span class="${e.pnl >= 0 ? 'up' : 'down'}">${e.pnl >= 0 ? '+' : ''}${fmtMoney(e.pnl, cur)} (${pct(e.ret)})</span>`}</td>
       </tr>`).join(''))}
@@ -2134,7 +2302,7 @@ function simResultMobileHtml(r, res, data, amount, rows) {
   const pos = res.position;
   const cardOf = e => `<div class="m-tr${e.real ? ' real' : ''}" data-act="trade" data-id="${r.id}" data-t="${e.t}" tabindex="0" title="눌러서 이날 실제 매매 넣기·고치기">
       <span class="m-tr-d">${md(e.t)}${e.t.slice(0, 4) !== ymd().slice(0, 4) ? `<small>${e.t.slice(0, 4)}</small>` : ''}</span>
-      <span class="m-tr-q"><span class="m-tr-k"><span class="kind ${e.kind}">${KIND[e.kind]}</span>${e.real ? '<span class="real-tag">실제</span>' : ''}${e.ex ? '<span class="ex-tag">예외</span>' : ''}${e.pre ? '<small class="muted pre-tag">시작일 전</small>' : ''}<span>${fmtNum(e.qty)}주 × ${fmtMoney(e.price, cur)}</span></span>
+      <span class="m-tr-q"><span class="m-tr-k"><span class="kind ${e.kind}">${KIND[e.kind]}</span>${e.real ? '<span class="real-tag">실제</span>' : '<span class="virt-tag">가상</span>'}${e.ex ? '<span class="ex-tag">예외</span>' : ''}${e.pre ? '<small class="muted pre-tag">시작일 전</small>' : ''}<span>${fmtNum(e.qty)}주 × ${fmtMoney(e.price, cur)}</span></span>
         <small class="muted">${how(e)}</small></span>
       <span class="m-tr-p">${e.pnl == null ? `${fmtMoney(e.amount, cur)}` : `<span class="${e.pnl >= 0 ? 'up' : 'down'}">${e.pnl >= 0 ? '+' : ''}${fmtMoney(e.pnl, cur)}</span><small>${pct(e.ret)} · ${fmtMoney(e.amount, cur)}</small>`}</span>
     </div>`;
@@ -2142,15 +2310,15 @@ function simResultMobileHtml(r, res, data, amount, rows) {
   const head = pd
     ? `<div class="m-sum"><span>${label} ${pd.sold ? `<b class="${pd.ret >= 0 ? 'up' : 'down'}">${pct(pd.ret)}</b>` : '<b class="muted">아직 안 팖</b>'}</span><span>그냥 보유 <b class="${pd.hold >= 0 ? 'up' : 'down'}">${pct(pd.hold)}</b></span></div>`
     : `<p class="muted small">${showVirtual() ? `${esc(sm.from)}부터 아직 살 날이 없었어요 (200일선이 내려가는 중이거나 음봉이 없었음).` : `${esc(sm.from)}부터 실제 매매 기록이 없어요.`}</p>`;
-  return `<div class="m-sim-h"><b>최근 매매</b> <small class="muted">${esc(r.name)}</small></div>
+  return `<div class="m-sim-h"><b>최근 매매 ${showVirtual() ? '(가상·실제)' : '(실제)'}</b> <small class="muted">${esc(r.name)}</small></div>
     <div class="m-pnl">${pnlTilesHtml(r, res, data, pd, cur)}</div>
     ${pd ? '' : head}
     <div class="m-trs">${shown.slice(0, 3).map(cardOf).join('')}</div>
     ${ev.length ? '' : `<p class="muted small">${showVirtual() ? '이 기간에는 사고판 적이 없어요.' : '실제 기록이 없어요.'}</p>`}
     <details class="m-fold m-sim-more" ${foldAttr('sim-more')}>
-      <summary>전체 기록 · 자세한 합계 보기 <small>(${ev.length}개)</small></summary>
-      ${pos ? `<div class="sim-sum"><div><span>규칙대로면 지금 보유</span><b>${fmtNum(pos.qty)}주 · 투자금의 ${pos.units * 20}% · 평단 ${fmtMoney(pos.avg, cur)}</b></div></div>` : ''}
+      <summary>${ev.length ? `전체 기록 ${ev.length}건 · 합계 보기 ›` : '전체 기록 · 합계 보기 ›'}</summary>
       <label class="check sim-virt"><input type="checkbox" data-virt${showVirtual() ? ' checked' : ''}> 가상 데이터 표시</label>
+      ${pos ? `<div class="sim-sum"><div><span>규칙대로면 지금 보유</span><b>${fmtNum(pos.qty)}주 · 투자금의 ${pos.units * 20}% · 평단 ${fmtMoney(pos.avg, cur)}</b></div></div>` : ''}
       <div class="m-trs">${shown.slice(3).map(cardOf).join('')}</div>
       ${ev.length > 30 ? `<div class="row"><button type="button" class="btn small" data-act="sim-all">${ui.simAll ? '최근 30개만' : `모두 보기 (${ev.length}개)`}</button></div>` : ''}
     </details>`;
@@ -2159,17 +2327,16 @@ function simResultMobileHtml(r, res, data, amount, rows) {
 // 오늘 줄: 오늘 할 일 카드와 같은 decide 결과 (주문 시각·방식 + 카드 문구). 손익은 비움
 const TODAY_KIND = { ...KIND, none: '쉼', wait: '대기' };
 function todayRowHtml(r) {
-  const us = isUS(r), cur = us ? '$' : '', p = swingParams(r), d = decide(p), t = ymd();
-  const ready = num(p.account) && num(p.open) && num(p.close);
-  const kinds = d.orders.length ? [...new Set(d.orders.map(o => o.kind))] : [ready ? 'none' : 'wait'];
-  const how = !d.order ? '주문 없음' : us ? `20:00 ${d.order}` : d.action === 'sl' ? '15:20 시장가' : '15:20 LOC';
-  const price = d.price == null ? '' : `${fmtMoney(d.price, cur)}${d.action === 'buy' ? '까지' : ''}`;
+  const us = isUS(r), o = orderLines(r), t = ymd(), ready = num(o.p.account) && num(o.p.open) && (us ? num(o.p.close) : true);
+  const kinds = o.lines.length ? [...new Set(o.lines.map(x => x.kind))] : [ready ? 'none' : 'wait'];
+  const how = !o.lines.length ? '주문 없음' : us ? `20:00 ${o.d.order}` : o.lines[0].kind === 'sl' ? '15:20 시장가' : '15:20 LOC';
+  const first = o.lines.find(x => x.kind === 'buy') || o.lines[0];
   const attrs = `data-act="trade" data-id="${r.id}" data-t="${t}" title="눌러서 오늘 실제 매매 넣기"`;
   return `<tr class="today" ${attrs} tabindex="0">
       <td>${t}<span class="today-tag">오늘</span></td><td>${kinds.map(k => `<span class="kind ${k}">${TODAY_KIND[k]}</span>`).join(' ')}</td><td class="small">${how}</td>
-      <td class="num">${d.qty ? fmtNum(d.qty) : ''}</td><td class="num">${price}</td><td class="num"></td><td class="num"></td>
+      <td class="num">${first ? fmtNum(first.qty) : ''}</td><td class="num">${first?.price ? `${first.price}${us && first.kind === 'buy' ? '까지' : ''}` : ''}</td><td class="num"></td><td class="num"></td>
     </tr>
-    <tr class="today today-more" ${attrs}><td colspan="7"><div class="today-text sw-text ${d.action}">${esc(d.text)}</div></td></tr>`;
+    <tr class="today today-more" ${attrs}><td colspan="7"><div class="today-text">${ordersFaceHtml(o)}</div></td></tr>`;
 }
 
 // 오늘 할 일 입력이 바뀌면 표의 오늘 줄도 다시 그린다 (늘 같은 내용)
@@ -2540,6 +2707,7 @@ view.addEventListener('click', e => {
     case 'ch-pick': ui.chartId = id; ui.simAll = false; render(); break;
     case 'trade': openTrade(id, el.dataset.t); break;
     case 'trade-import': openImport(); break;
+    case 'qt': openQuickTrade(); break;
     case 'sim-all': ui.simAll = !ui.simAll; drawChart().catch(err => toast(err.message, true)); break;
     case 'sw-fill': swingFill(id, Number(el.dataset.i)).catch(err => toast(err.message, true)); break;
   }
@@ -2555,7 +2723,11 @@ function swingInput(e) {
   if (!k || !box) return;
   const id = box.dataset.sw;
   ui.swing[id] = { ...(ui.swing[id] || {}), [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value, auto: false };
-  box.querySelector('.sw-result').innerHTML = swingResultHtml(swingList().find(r => r.id === id));
+  const r = swingList().find(x => x.id === id);
+  box.querySelector('.sw-result').innerHTML = swingResultHtml(r);
+  const wi = box.querySelector('[data-why-info]');
+  if (wi) wi.innerHTML = whyInfoHtml(r);
+  paintState(box, r);
   updateTodayRow(id);
 }
 view.addEventListener('input', swingInput);
@@ -2743,7 +2915,9 @@ function fieldHtml(f, v) {
         <datalist id="folder-list">${folderTree().map(t => `<option value="${esc(t.path)}">`).join('')}</datalist>`;
       break;
     default:
-      input = `<input type="text" ${base} value="${esc(v)}">`;
+      // 고를 수 있는 값(f.list)이 있으면 목록에서 고르거나 직접 입력 (지금 값이 목록에 없어도 그대로)
+      input = f.list ? `<input type="text" ${base} list="dl-${f.k}" value="${esc(v)}" autocomplete="off"><datalist id="dl-${f.k}">${f.list.map(o => `<option value="${esc(o)}">`).join('')}</datalist>`
+        : `<input type="text" ${base} value="${esc(v)}">`;
   }
   return `<label class="field${f.type === 'textarea' ? ' wide' : ''}" for="${id}">
       <span>${f.l}${f.req ? ' *' : ''}</span>${input}${f.hint ? `<small class="muted">${f.hint}</small>` : ''}
@@ -2786,7 +2960,7 @@ function openEditor(key, id, preset = {}) {
   const def = COLLECTIONS[key];
   const rec = id ? items(key).find(r => r.id === id) : null;
   if (id && !rec) return;
-  const v = rec || preset;
+  const v = rec || (key === 'stocks' ? { broker: DEFAULT_BROKER, ...preset } : preset);
   ui.attachTo = rec && !def.noAttach ? { key, id: rec.id } : null;
   const attach = def.noAttach ? ''
     : rec ? `<div class="attach wide" id="attach">${attachHtml(key, rec.id)}</div>`

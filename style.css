@@ -662,6 +662,32 @@ html, body { overscroll-behavior-y: contain; }
 .rule-card dd { margin: 0; min-width: 0; }
 .rule-note { margin: 8px 0 0; font-size: 13px; color: var(--text-2); }
 .rule-alt { margin: 10px 0 0; }
+/* 가상 줄 꼬리표 (실제는 꽉 찬 파랑, 가상은 흐린 테두리) */
+.virt-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 600; padding: 0 5px; border-radius: 5px; border: 1px dashed var(--muted); color: var(--muted); vertical-align: 1px; }
+/* 매매 넣기 */
+.qt-stock { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0 0 10px; font-size: 16px; }
+.qt-change > summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+.qt-change .chip-row { margin: 6px 0 0; }
+.qt-side { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 12px; }
+.qt-btn { height: 52px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); font: inherit; font-size: 18px; font-weight: 800; color: var(--text-2); cursor: pointer; }
+.qt-btn.buy.on { border-color: var(--st-buy); background: color-mix(in srgb, var(--st-buy) 12%, var(--surface)); color: var(--st-buy); }
+.qt-btn.sell.on { border-color: var(--st-tp); background: color-mix(in srgb, var(--st-tp) 12%, var(--surface)); color: var(--st-tp); }
+.qt-more { margin: 8px 0; }
+.qt-more > summary { cursor: pointer; font-size: 14px; color: var(--text-2); min-height: 32px; }
+.qt-more > summary b { color: var(--text); font-weight: 600; margin-left: 4px; }
+.qt-warn { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 12%, var(--surface)); color: var(--text); font-size: 14px; }
+/* 주문 줄 (PC 오늘 할 일 · 오늘 줄 · 휴대폰 카드 같음): "15:20까지 · LOC 매수 3주 · 1,457,000원" + "현재 40% / 100% · 오늘 +40%" */
+:root { --st-buy: #0f8a43; --st-tp: #b45f00; --st-sl: #7446d6; --st-rest: #56627a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --st-buy: #3fbf74; --st-tp: #f0a040; --st-sl: #a88bf0; --st-rest: #a3afc4; } }
+:root[data-theme="dark"] { --st-buy: #3fbf74; --st-tp: #f0a040; --st-sl: #a88bf0; --st-rest: #a3afc4; }
+.sw-ords { display: grid; gap: 2px; }
+.sw-ords .ord { display: block; font-weight: 600; color: var(--text); }
+.sw-ords .ord b { font-weight: 800; }
+.sw-ords .ord.buy b { color: var(--st-buy); } .sw-ords .ord.tp b { color: var(--st-tp); } .sw-ords .ord.sl b, .sw-ords .ord.sl { color: var(--st-sl); }
+.sw-ords .ord.rest { color: var(--st-rest); }
+.ord-badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 0 7px; border-radius: 6px; border: 1.5px solid var(--st-rest); color: var(--st-rest); vertical-align: 1px; }
+.ord-fill { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+.ord-fill b { color: var(--text); font-weight: 700; }
 /* 예외 매매 꼬리표 · 원장 나눔 */
 .ex-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; border: 1px solid var(--muted); color: var(--text-2); vertical-align: 1px; }
 .ex-split { display: block; font-size: 11px; color: var(--text-2); }
@@ -811,6 +837,19 @@ html, body { overscroll-behavior-y: contain; }
   .m-big.buy { color: #12a150; } .m-big.tp { color: #e07b00; } .m-big.sl { color: #8b5cf6; }
   .m-big.rest { font-weight: 600; color: var(--muted); }
   .m-hero .m-big { font-size: 26px; }
+  /* 카드: 주문 줄이 주인공 · 상태별 색 (매수 초록 · 익절 주황 · 손절 보라 · 쉼 회청색) */
+  .m-hero .sw-ords { margin-top: 6px; gap: 4px; }
+  .m-hero .sw-ords .ord { font-size: 16px; line-height: 1.35; }
+  .m-hero .sw-ords .ord b { font-size: 21px; }
+  .m-hero .sw-ords .ord.rest { font-size: 18px; font-weight: 700; }
+  .m-hero .ord-fill { font-size: 13px; margin-top: 2px; }
+  .m-slot[data-state] { border-color: var(--st); background: color-mix(in srgb, var(--st) 6%, var(--surface)); }
+  .m-slot[data-state] .m-band { background: var(--st); }
+  .m-slot[data-state=buy] { --st: var(--st-buy); } .m-slot[data-state=tp] { --st: var(--st-tp); }
+  .m-slot[data-state=sl] { --st: var(--st-sl); } .m-slot[data-state=rest] { --st: var(--st-rest); }
+  .m-state { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 6px; background: rgba(255, 255, 255, .22); font-size: 12px; }
+  .m-slot[data-state=rest] .ord-badge { display: none; }
+  .m-why-info p { margin: 0 0 4px; }
   .m-how { font-size: 15px; font-weight: 600; margin-top: 2px; }
   .m-detail.sw-text { margin: 4px 0 0; font-size: 13px; font-weight: 400; color: var(--text-2); }
   .m-how small { font-weight: 400; color: var(--text-2); }
@@ -873,3 +912,7 @@ html, body { overscroll-behavior-y: contain; }
   .m-kv dt { color: var(--muted); }
   .m-kv dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 }
+
+/* 어두운 테마: 카드 띠 글자는 어둡게 (밝은 상태색 위) */
+@media (max-width: 599px) and (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .m-slot[data-state] .m-band { color: #101214; } }
+@media (max-width: 599px) { :root[data-theme="dark"] .m-slot[data-state] .m-band { color: #101214; } }

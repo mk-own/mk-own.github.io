@@ -7,6 +7,9 @@
 
 import { levels } from './swing.js';
 
+// 주식 증권사 고르기 (첫 번째가 새 종목 기본값). 목록에 없는 값도 직접 넣을 수 있고 그대로 둠
+export const BROKERS = ['미래에셋증권', '토스증권', '메리츠증권', '신한투자증권'];
+
 export const num = v => {
   if (v === '' || v == null) return 0;
   const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
@@ -54,7 +57,7 @@ export const COLLECTIONS = {
   stocks: {
     title: '주식',
     fields: [
-      { k: 'broker', l: '증권사/계좌' },
+      { k: 'broker', l: '증권사/계좌', list: BROKERS },
       { k: 'name', l: '종목명', req: true },
       { k: 'code', l: '종목코드' },
       { k: 'market', l: '구분', type: 'select', opts: ['국내', '해외', 'ETF', '기타'] },
