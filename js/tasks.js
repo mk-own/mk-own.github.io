@@ -10,7 +10,9 @@ const SCOPE = 'https://www.googleapis.com/auth/tasks';
 const TK = 'hub.gtasks'; // sessionStorage: 탭을 닫거나 잠그면 사라짐
 
 let ctx; // app.js의 화면 도구 { esc, toast, modal, mform, view }
+const DONE_K = 'hub.gtasks.done'; // 완료됨 칸을 펼쳐 둘지 (이 탭에서만 기억)
 const st = { lists: null, tasks: null, listId: '', loading: false, showDone: false, seq: 0, editCid: false };
+try { st.showDone = sessionStorage.getItem(DONE_K) === '1'; } catch {}
 let token = null; // { v, exp, cid }
 
 const cfg = () => S.data.sys.googleTasks || {};
@@ -117,7 +119,7 @@ async function api(path, { method = 'GET', body } = {}, retry = true) {
     return api(path, { method, body }, false);
   }
   if (r.status === 401) forgetGoogleToken();
-  if (!r.ok) throw new Error(httpErr(r.status));
+  if (!r.ok) throw Object.assign(new Error(httpErr(r.status)), { status: r.status });
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 
@@ -386,6 +388,41 @@ async function delTask(id) {
   }
 }
 
+const hasKids = id => (st.tasks || []).some(x => x.parent === id);
+// 받침 따라 '로'/'으로' (ㄹ 받침은 '로')
+function ro(word) {
+  const c = String(word).trim().slice(-1).charCodeAt(0) - 0xac00;
+  if (c < 0 || c > 11171) return '(으)로';
+  return c % 28 === 0 || c % 28 === 8 ? '로' : '으로';
+}
+
+// 다른 목록으로 옮기기: Google의 move를 먼저 쓰고, 안 되면(400·404) 새 목록에 복사 → 복사가 된 뒤에만 원래 것을 지운다
+async function moveTask(t, src, dst) {
+  const name = st.lists.find(l => l.id === dst)?.title || '다른 목록';
+  const path = `${L(src)}/tasks/${encodeURIComponent(t.id)}`;
+  try {
+    await api(`${path}/move?destinationTasklist=${encodeURIComponent(dst)}`, { method: 'POST' });
+  } catch (e) {
+    if (e.status !== 400 && e.status !== 404) throw e;
+    const copy = { title: t.title, status: t.status === 'completed' ? 'completed' : 'needsAction' };
+    if (t.notes) copy.notes = t.notes;
+    if (t.due) copy.due = t.due;
+    await api(`${L(dst)}/tasks`, { method: 'POST', body: copy });
+    try {
+      await api(path, { method: 'DELETE' });
+    } catch {
+      // 다시 저장하면 복사본이 또 생기므로 창을 닫는다
+      ctx.modal.close();
+      st.tasks = null;
+      loadTasks();
+      throw new Error(`${name}에 복사했지만 원래 목록에서 지우지 못했어요. 원래 할 일은 직접 지워 주세요.`);
+    }
+  }
+  st.tasks = (st.tasks || []).filter(x => x.id !== t.id);
+  ctx.toast(`${name}${ro(name)} 옮겼어요.`);
+  loadTasks();
+}
+
 function openEdit(id) {
   const t = findTask(id);
   if (!t) return;
@@ -394,8 +431,9 @@ function openEdit(id) {
     <h2>할 일 수정</h2>
     <div class="fields">
       <label class="field wide"><span>제목 *</span><input name="title" type="text" maxlength="1024" value="${esc(t.title)}" required></label>
+      <label class="field"><span>목록</span><select name="list">${(st.lists || []).map(l => `<option value="${esc(l.id)}"${l.id === st.listId ? ' selected' : ''}>${esc(l.title || '(이름 없음)')}</option>`).join('')}</select></label>
       <label class="field"><span>마감일</span><input name="due" type="date" value="${esc(dueDay(t))}"></label>
-      <label class="check gt-mdone"><input type="checkbox" name="done"${t.status === 'completed' ? ' checked' : ''}> 했어요</label>
+      <label class="check wide"><input type="checkbox" name="done"${t.status === 'completed' ? ' checked' : ''}> 했어요</label>
       <label class="field wide"><span>메모</span><textarea name="notes" rows="4" maxlength="8192">${esc(t.notes)}</textarea></label>
     </div>
     <div class="modal-actions">
@@ -418,11 +456,15 @@ function openEdit(id) {
     const body = { title, notes: mform.notes.value.trim() || null, due: dueIso(mform.due.value) };
     const done = mform.done.checked;
     if (done !== (t.status === 'completed')) Object.assign(body, done ? { status: 'completed' } : { status: 'needsAction', completed: null });
+    const dst = mform.elements.list?.value || st.listId;
+    if (dst !== st.listId && hasKids(id)) return ctx.toast('하위 할 일이 있는 할 일은 옮길 수 없어요. 하위 할 일을 먼저 하나씩 옮기거나 지운 뒤 해 주세요.', true);
     const btn = mform.querySelector('[type=submit]');
     btn.disabled = true;
     try {
-      const r = await api(`${L(st.listId)}/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+      const src = st.listId;
+      const r = await api(`${L(src)}/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body });
       putTask(r);
+      if (dst !== src) await moveTask(r || { ...t, ...body }, src, dst);
       modal.close();
       paint();
     } catch (err) {
@@ -496,7 +538,9 @@ export function initTasks(c) {
     if (id) toggleDone(id, e.target.checked, e.target);
   });
   view.addEventListener('toggle', e => {
-    if (e.target.matches?.('.gt-done')) st.showDone = e.target.open;
+    if (!e.target.matches?.('.gt-done')) return;
+    st.showDone = e.target.open;
+    try { sessionStorage.setItem(DONE_K, st.showDone ? '1' : '0'); } catch {}
   }, true);
   view.addEventListener('submit', e => {
     const f = e.target.closest('[data-gt-form]');
