@@ -558,6 +558,14 @@ async function clearCid() {
   ctx.toast('클라이언트 ID를 지웠어요.');
 }
 
+// ↻ 새로고침 (머리 버튼 · 휴대폰에서 당겨서 새로고침). 다시 받았으면 true, 로그인 전이거나 실패면 false
+export async function refreshTasks() {
+  if (!tokenOk()) { paint(); return false; }
+  st.lists = null; st.tasks = null;
+  await loadLists();
+  return !!st.lists;
+}
+
 export function initTasks(c) {
   ctx = c;
   const { view } = c;
@@ -568,11 +576,7 @@ export function initTasks(c) {
     switch (el.dataset.gt) {
       case 'login': login(el); break;
       case 'logout': logout(); break;
-      case 'refresh':
-        if (!tokenOk()) { paint(); break; }
-        st.lists = null; st.tasks = null;
-        loadLists();
-        break;
+      case 'refresh': refreshTasks(); break;
       case 'list':
         if (id === st.listId) break;
         st.listId = id;

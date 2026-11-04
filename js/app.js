@@ -3,7 +3,7 @@ import { parseBookmarks, SEP } from './bookmarks.js';
 import { COLLECTIONS, SECTIONS, VIEWS, DAYS, num, whenText, isUS } from './schemas.js';
 import * as store from './store.js';
 import { decide, applyFill, todayInputs, simulate, ma200Line } from './swing.js';
-import { initTasks, tasksHtml, tasksMount, forgetGoogleToken } from './tasks.js';
+import { initTasks, tasksHtml, tasksMount, forgetGoogleToken, refreshTasks } from './tasks.js';
 
 const { S } = store;
 const LS = { prefs: 'hub.prefs', legacyCache: 'hub.cache', legacyPlain: 'hub.plain', legacyGh: 'hub.github' };
@@ -2355,5 +2355,75 @@ async function boot() {
   }
   unlockScreen();
 }
+
+// ----- 휴대폰: 맨 위에서 아래로 당겼다 놓으면 새로고침 -----
+// 브라우저 자체 새로고침은 CSS(overscroll-behavior)로 막아 둠: 페이지를 다시 열면 잠금을 다시 풀어야 할 수 있어서.
+// 그 대신 화면마다 ↻와 같은 일을 한다. 리스너는 passive라 스크롤을 막지 않는다
+const PTR_GO = 70; // 저항을 준 뒤 이만큼 내려오면 놓을 때 새로고침
+const ptr = document.createElement('div');
+ptr.className = 'ptr';
+ptr.hidden = true;
+ptr.setAttribute('aria-hidden', 'true');
+ptr.innerHTML = '<span class="ptr-icon">↓</span><span class="ptr-text"></span>';
+document.body.append(ptr);
+let pull = null, ptrBusy = false; // pull: { x0, y0, d(내려온 정도), on(아래로 당기는 중) }
+
+// 차트·입력칸·옆으로 스크롤되는 표 안에서 시작하면 안 함 (그 안의 끌기는 그대로)
+function ptrSkip(t) {
+  if (scrollY > 0 || ptrBusy || !S.data || document.querySelector('dialog[open]')) return true;
+  if (t.closest?.('#chart, input, textarea, select, [contenteditable=""], [contenteditable=true]')) return true;
+  for (let el = t; el && el !== document.body; el = el.parentElement) {
+    if (el.scrollWidth > el.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true;
+  }
+  return false;
+}
+function ptrShow(d, mode) {
+  ptr.hidden = d <= 0 && !mode;
+  ptr.classList.toggle('armed', mode === 'armed');
+  ptr.classList.toggle('busy', mode === 'busy');
+  ptr.querySelector('.ptr-icon').textContent = mode === 'busy' ? '↻' : '↓';
+  ptr.querySelector('.ptr-text').textContent = mode === 'busy' ? '새로고침 중…' : mode === 'armed' ? '놓으면 새로고침' : '당겨서 새로고침';
+  ptr.style.transform = `translate(-50%, ${Math.round(Math.min(d, 90) - 44)}px)`;
+}
+
+// 지금 화면에 맞는 새로고침: 주식 = 가격 ↻ · 할 일 = 할 일 ↻ · 그 밖 = 다시 그리기
+// (저장소에서 따로 받아 오는 기능은 없어서 다시 그리기만. 못 올린 변경은 자동 저장이 그대로 올림)
+function pullRefresh() {
+  const { s, tab } = parseRoute();
+  if (s.id === 'assets' && tab === 'stocks' && $('.swing')) return refreshPrices();
+  if (s.id === 'tasks') return refreshTasks().then(ok => toast(ok ? '할 일을 다시 불러왔어요.' : '화면을 새로 그렸어요.'));
+  render();
+  toast('화면을 새로 그렸어요.');
+  return Promise.resolve();
+}
+
+addEventListener('touchstart', e => {
+  pull = e.touches.length === 1 && !ptrSkip(e.target) ? { x0: e.touches[0].clientX, y0: e.touches[0].clientY, d: 0, on: false } : null;
+}, { passive: true });
+addEventListener('touchmove', e => {
+  if (!pull) return;
+  const t = e.touches[0], dy = t.clientY - pull.y0, dx = t.clientX - pull.x0;
+  if (!pull.on) {
+    if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+    // 옆으로 끌거나 위로 올리면(보통 스크롤) 이번 터치는 끝
+    if (dy <= 0 || Math.abs(dx) > Math.abs(dy) || scrollY > 0) { pull = null; return; }
+    pull.on = true;
+  }
+  if (scrollY > 0) { pull = null; ptrShow(0); return; }
+  pull.d = Math.max(0, dy) * 0.5; // 저항: 손가락의 절반만 내려옴
+  ptrShow(pull.d, pull.d >= PTR_GO ? 'armed' : '');
+}, { passive: true });
+addEventListener('touchend', () => {
+  const p = pull;
+  pull = null;
+  if (!p?.on) return;
+  if (p.d < PTR_GO) { ptrShow(0); return; }
+  ptrBusy = true;
+  ptrShow(60, 'busy');
+  // 오래 걸리는 일(가격 받기)은 그 화면이 따로 진행을 보여 주므로 표시는 길어야 1.5초
+  const job = Promise.resolve().then(pullRefresh).catch(err => toast(err.message, true));
+  Promise.race([job, new Promise(r => setTimeout(r, 1500))]).then(() => { ptrBusy = false; ptrShow(0); });
+}, { passive: true });
+addEventListener('touchcancel', () => { pull = null; ptrShow(0); }, { passive: true });
 
 boot();
