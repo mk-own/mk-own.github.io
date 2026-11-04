@@ -744,7 +744,10 @@ function swingResultHtml(r) {
 // ----- 국내 LOC 미리 보기 (휴대폰 지금 할 일 카드): 시가만 알면 주문 가격·수량이 정해짐 -----
 // KRX 호가 단위 · LOC 매수 = 시가 − 1호가 · 익절 LOC = 평단 × 1.05를 호가 단위로 올림 · 손절 = 15:20 예상체결가 ≤ 평단 × 0.85면 시장가
 const krTick = v => (v < 2000 ? 1 : v < 5000 ? 5 : v < 20000 ? 10 : v < 50000 ? 50 : v < 200000 ? 100 : v < 500000 ? 500 : 1000);
+// 값 v 이상인 가장 작은 호가 (익절 LOC)
 const ceilTick = v => { const t = krTick(v); return Math.ceil(v / t - 1e-9) * t; };
+// 시가보다 낮은 가장 큰 호가 (LOC 매수 = 시가 − 1호가). 시가가 호가 단위에 안 맞아도 늘 맞는 값 (예: 1,423,920 → 1,423,000 · 500,000 → 499,500)
+const tickBelow = v => { const x = Math.ceil(v) - 1, t = krTick(x); return Math.floor(x / t) * t; };
 // 주식 수: swing.js buyQty와 똑같은 셈 (누적 목표 칸 × 한 칸 금액 ÷ 가격 반올림 − 가진 수, 남은 현금 안에서, 최소 1주). 가격만 LOC 가격
 function krLocQty(p, price, k) {
   const account = num(p.account), units = Math.round(num(p.units)), qty = num(p.qty), avg = num(p.avg);
@@ -757,7 +760,7 @@ function krLocQty(p, price, k) {
 function krLoc(p) {
   const open = num(p.open), units = Math.round(num(p.units)), qty = num(p.qty), avg = num(p.avg);
   const held = qty > 0 && avg > 0, k = Math.min(2, N - units);
-  const buyPx = open ? open - krTick(open - 1) : 0;
+  const buyPx = open ? tickBelow(open) : 0;
   const tpPx = held ? ceilTick(avg * TP) : null, sl = held ? levels(avg).sl : null;
   let why = '', q = 0;
   if (!p.maUp) why = '200일선이 내려가는 중이라 새로 사지 않음';
