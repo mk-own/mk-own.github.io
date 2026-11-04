@@ -556,7 +556,7 @@ function render() {
   else if (s.id === 'library') v.innerHTML = libraryHtml();
   else v.innerHTML = sectionHtml(s, tab);
   if (chart && !$('#chart')) { chart.remove(); chart = null; }
-  if ($('.swing [data-sw]')) autofillSwing(items('stocks').filter(r => num(r.account) > 0)).catch(() => {});
+  if ($('.swing [data-sw]')) autofillSwing(swingList()).catch(() => {});
   if ($('#chart')) drawChart().catch(e => { const o = $('#sim-out'); if (o) o.innerHTML = `<p class="err">${esc(e.message)}</p>`; });
 }
 
@@ -739,11 +739,16 @@ function tableHtml(key) {
 
 const swingParams = r => ({ ...(ui.swing[r.id] || {}), account: r.account, units: r.units, qty: r.qty, avg: r.avg, us: isUS(r) });
 
+// 오늘 할 일에 나올 종목: 비율을 적용한 종목. 아직 적용 전이면 팝업에 보이는 비율(저장한 값이나 기본값)로 미리 보여준다
+const swingReal = () => items('stocks').filter(r => num(r.account) > 0);
+const swingList = () => (swingReal().length ? swingReal() : planChartRows());
+const isPreview = r => String(r.id).startsWith('plan-');
+
 function swingResultHtml(r) {
   const d = decide(swingParams(r));
   const label = { tp: '익절 체결', sl: '손절 체결', buy: '매수 체결' };
   return `<p class="sw-text ${d.action}">${esc(d.text)}</p>
-    ${d.orders.length ? `<div class="row">${d.orders.map((o, i) => `<button type="button" class="btn small" data-act="sw-fill" data-id="${r.id}" data-i="${i}">${label[o.kind]}했어요</button>`).join('')}</div>` : ''}`;
+    ${d.orders.length && !isPreview(r) ? `<div class="row">${d.orders.map((o, i) => `<button type="button" class="btn small" data-act="sw-fill" data-id="${r.id}" data-i="${i}">${label[o.kind]}했어요</button>`).join('')}</div>` : ''}`;
 }
 
 // 단타 종목과 비중 기본값. 사용자가 고친 값은 sys.swingPlan에 저장한다
@@ -974,13 +979,13 @@ const SWING_RULES = `<ul class="sw-rules">
 </ul>`;
 
 function swingHtml() {
-  const list = items('stocks').filter(r => num(r.account) > 0);
+  const list = swingList(), preview = !swingReal().length;
   return `<section class="card swing">
     <h2>오늘 할 일 <small class="muted">음봉 단타</small>
       <button type="button" class="btn small primary sw-edit" data-act="sw-plan">종목별 비율 입력</button>
       <button type="button" class="btn small sw-edit" data-act="sw-refresh" title="가격·환율을 다시 불러와요">↻ 새로고침</button>
       <button type="button" class="btn small sw-edit" data-act="sw-rules">규칙 보기</button></h2>
-    ${list.length ? '' : '<p class="muted small sw-start">종목별 비율 입력을 눌러 전체 금액과 비율을 넣으면 오늘 할 일이 여기 나와요.</p>'}
+    ${preview ? '<p class="muted small sw-start">지금 비율로 미리 보여주는 거예요. <b>종목별 비율 입력 → 적용</b>을 눌러야 저장되고, 체결했어요 버튼으로 산 양도 기록돼요.</p>' : ''}
     ${list.map(r => {
       const us = isUS(r), v = ui.swing[r.id] || {}, cur = us ? '$' : '';
       const units = Math.round(num(r.units));
@@ -997,7 +1002,7 @@ function swingHtml() {
       </div>`;
     }).join('')}
   </section>
-  ${chartCardHtml(list.length ? list : planChartRows())}`;
+  ${chartCardHtml(list)}`;
 }
 
 // ----- 주가 차트·시뮬레이션 -----
@@ -1140,7 +1145,8 @@ async function drawChart() {
     layout: { background: { color: 'transparent' }, textColor: col('--text-2'), fontFamily: getComputedStyle(document.body).fontFamily },
     grid: { vertLines: { color: col('--line') }, horzLines: { color: col('--line') } },
     rightPriceScale: { borderColor: col('--line') },
-    timeScale: { borderColor: col('--line'), tickMarkFormatter: tickMD },
+    // 끌어도 첫 봉·마지막 봉 밖으로 빈 공간이 생기지 않게
+    timeScale: { borderColor: col('--line'), tickMarkFormatter: tickMD, fixLeftEdge: true, fixRightEdge: true },
     localization: { locale: 'ko-KR', dateFormat: 'yyyy-MM-dd', priceFormatter: v => (us ? `$${v.toFixed(2)}` : Math.round(v).toLocaleString('ko-KR')) },
   });
   const candles = chart.addCandlestickSeries({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
@@ -1686,7 +1692,7 @@ function swingInput(e) {
   if (!k || !box) return;
   const id = box.dataset.sw;
   ui.swing[id] = { ...(ui.swing[id] || {}), [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value, auto: false };
-  box.querySelector('.sw-result').innerHTML = swingResultHtml(items('stocks').find(r => r.id === id));
+  box.querySelector('.sw-result').innerHTML = swingResultHtml(swingList().find(r => r.id === id));
 }
 view.addEventListener('input', swingInput);
 view.addEventListener('input', e => { if (e.target.matches('[data-sim] [name=amount][inputmode=numeric]')) commaInput(e.target); });
