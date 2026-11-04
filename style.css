@@ -638,8 +638,28 @@ html, body { overscroll-behavior-y: contain; }
 .gt-code { display: inline-block; font-size: 13px; background: var(--surface-2); border-radius: 6px; padding: 1px 6px; margin: 2px 4px 0 0; overflow-wrap: anywhere; }
 .gt-cid { max-width: 560px; margin-bottom: 8px; }
 .gt-cid input { font-family: ui-monospace, Consolas, monospace; font-size: 14px; }
-.gt-mdone { align-self: end; min-height: 38px; }
 @media (max-width: 560px) {
   .gt-add { grid-template-columns: 1fr auto; }
   .gt-add [name=title] { grid-column: 1 / -1; }
 }
+/* 할 일: 하위 할 일 · 수정 창 */
+.gt-sub-add {
+  flex: none; align-self: center; height: 26px; padding: 0 8px; border-radius: 7px; font: inherit; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text-2); cursor: pointer; white-space: nowrap;
+}
+.gt-sub-add:hover { color: var(--text); background: var(--surface-2); }
+@media (hover: hover) {
+  .gt-sub-add { opacity: 0; }
+  .gt-item:hover .gt-sub-add, .gt-item:focus-within .gt-sub-add { opacity: 1; }
+}
+.gt-subform { padding: 4px 0 8px 28px; }
+.gt-subform form { display: flex; gap: 6px; align-items: center; }
+.gt-subform input { flex: 1; min-width: 0; min-height: 32px; font-size: 14px; }
+.gt-msub > span { font-size: 13px; color: var(--text-2); font-weight: 600; }
+.gt-mkids { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 2px; font-size: 14px; }
+.gt-mkids li { padding: 4px 8px; border-left: 2px solid var(--line); }
+.gt-mkids li.done { text-decoration: line-through; color: var(--muted); }
+.gt-msub-row { display: flex; gap: 8px; }
+.gt-msub-row input { flex: 1; min-width: 0; }
+.gt-mlink { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 0; }
+.gt-mlink .btn { display: inline-flex; align-items: center; text-decoration: none; padding-left: 0; color: var(--accent); }

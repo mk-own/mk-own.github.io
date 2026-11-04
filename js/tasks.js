@@ -11,7 +11,7 @@ const TK = 'hub.gtasks'; // sessionStorage: 탭을 닫거나 잠그면 사라짐
 
 let ctx; // app.js의 화면 도구 { esc, toast, modal, mform, view }
 const DONE_K = 'hub.gtasks.done'; // 완료됨 칸을 펼쳐 둘지 (이 탭에서만 기억)
-const st = { lists: null, tasks: null, listId: '', loading: false, showDone: false, seq: 0, editCid: false };
+const st = { lists: null, tasks: null, listId: '', loading: false, showDone: false, seq: 0, editCid: false, subFor: '' };
 try { st.showDone = sessionStorage.getItem(DONE_K) === '1'; } catch {}
 let token = null; // { v, exp, cid }
 
@@ -185,6 +185,7 @@ function dueHtml(t) {
 
 function itemHtml(t, child) {
   const done = t.status === 'completed';
+  const sub = !child && !done && !t.parent;
   return `<li class="gt-item${done ? ' done' : ''}${child ? ' child' : ''}">
       <input type="checkbox" data-gt-done="${esc(t.id)}"${done ? ' checked' : ''} aria-label="${done ? '안 한 것으로 되돌리기' : '했어요'}">
       <button type="button" class="gt-main" data-gt="edit" data-id="${esc(t.id)}">
@@ -192,9 +193,16 @@ function itemHtml(t, child) {
         ${t.notes ? `<span class="gt-notes">${esc(t.notes)}</span>` : ''}
         ${dueHtml(t)}
       </button>
+      ${sub ? `<button type="button" class="gt-sub-add" data-gt="sub" data-id="${esc(t.id)}" title="하위 할 일 추가">+ 하위</button>` : ''}
       <button type="button" class="icon-btn gt-del" data-gt="del" data-id="${esc(t.id)}" title="삭제" aria-label="삭제">✕</button>
     </li>`;
 }
+
+// 줄 바로 아래에 여는 하위 할 일 입력칸
+const subFormHtml = t => `<li class="gt-subform"><form data-gt-form="sub" data-parent="${esc(t.id)}">
+    <input name="title" type="text" maxlength="1024" autocomplete="off" required placeholder="하위 할 일" aria-label="${esc(t.title)}의 하위 할 일">
+    <button type="submit" class="btn small primary">추가</button>
+    <button type="button" class="btn small" data-gt="sub-cancel">취소</button></form></li>`;
 
 // 하위 할 일은 부모 바로 아래에 (부모가 없거나 완료됐으면 그냥 위치대로)
 function openOrdered(open) {
@@ -205,6 +213,7 @@ function openOrdered(open) {
   for (const t of tops) {
     out.push([t, false]);
     for (const c of open.filter(x => x.parent === t.id).sort(byPos)) out.push([c, true]);
+    if (st.subFor === t.id) out.push([t, 'form']);
   }
   return out;
 }
@@ -258,14 +267,14 @@ function bodyHtml() {
   const done = ts.filter(t => t.status === 'completed').sort((a, b) => String(b.completed || '').localeCompare(String(a.completed || '')));
   const openHtml = st.tasks == null
     ? `<p class="muted">${st.loading ? '불러오는 중…' : '할 일을 불러오지 못했어요.'}</p>`
-    : open.length ? `<ul class="gt-list">${openOrdered(open).map(([t, c]) => itemHtml(t, c)).join('')}</ul>`
+    : open.length ? `<ul class="gt-list">${openOrdered(open).map(([t, c]) => (c === 'form' ? subFormHtml(t) : itemHtml(t, c))).join('')}</ul>`
       : '<p class="muted gt-none">남은 할 일이 없어요.</p>';
 
   return `${chips}
     <section class="card gt-card">
       <form class="gt-add" data-gt-form="add">
         <input name="title" type="text" placeholder="새 할 일" maxlength="1024" autocomplete="off" required aria-label="새 할 일">
-        <input name="due" type="date" aria-label="마감일 (선택)" title="마감일 (선택)">
+        <input name="due" type="date" aria-label="날짜 (선택)" title="날짜 (선택) — 시간·기한·별표는 Google 할 일 앱에서">
         <button type="submit" class="btn primary">+ 추가</button>
         <input name="notes" type="text" placeholder="메모 (선택)" maxlength="8192" autocomplete="off" aria-label="메모 (선택)">
       </form>
@@ -372,6 +381,14 @@ async function addTask(form) {
   }
 }
 
+async function addSub(parentId, title) {
+  title = String(title || '').trim();
+  if (!title) return null;
+  const r = await api(`${L(st.listId)}/tasks?parent=${encodeURIComponent(parentId)}`, { method: 'POST', body: { title } });
+  st.tasks = [...(st.tasks || []), r];
+  return r;
+}
+
 async function delTask(id) {
   const t = findTask(id);
   if (!t) return false;
@@ -423,42 +440,67 @@ async function moveTask(t, src, dst) {
   loadTasks();
 }
 
+const kidsOf = id => (st.tasks || []).filter(x => x.parent === id).sort((a, b) => String(a.position || '').localeCompare(String(b.position || '')));
+const kidsHtml = id => {
+  const ks = kidsOf(id);
+  return ks.length ? `<ul class="gt-mkids">${ks.map(k => `<li class="${k.status === 'completed' ? 'done' : ''}">${esc(k.title || '(제목 없음)')}</li>`).join('')}</ul>` : '';
+};
+// Google 할 일 웹에서 이 할 일 열기 (별표·시간·기한은 API에 없어서 거기서)
+const webLink = t => (/^https:\/\//.test(t.webViewLink || '') ? t.webViewLink : 'https://tasks.google.com/');
+
 function openEdit(id) {
   const t = findTask(id);
   if (!t) return;
   const { mform, modal } = ctx;
+  const done = t.status === 'completed';
+  const top = !t.parent;
   mform.innerHTML = `
     <h2>할 일 수정</h2>
     <div class="fields">
       <label class="field wide"><span>제목 *</span><input name="title" type="text" maxlength="1024" value="${esc(t.title)}" required></label>
       <label class="field"><span>목록</span><select name="list">${(st.lists || []).map(l => `<option value="${esc(l.id)}"${l.id === st.listId ? ' selected' : ''}>${esc(l.title || '(이름 없음)')}</option>`).join('')}</select></label>
-      <label class="field"><span>마감일</span><input name="due" type="date" value="${esc(dueDay(t))}"></label>
-      <label class="check wide"><input type="checkbox" name="done"${t.status === 'completed' ? ' checked' : ''}> 했어요</label>
+      <label class="field"><span>날짜</span><input name="due" type="date" value="${esc(dueDay(t))}">
+        <small class="muted">시간·기한·별표는 Google 할 일 앱에서</small></label>
       <label class="field wide"><span>메모</span><textarea name="notes" rows="4" maxlength="8192">${esc(t.notes)}</textarea></label>
+      ${top ? `<div class="field wide gt-msub"><span>하위 할 일</span><div id="gt-mkids">${kidsHtml(id)}</div>
+        <div class="gt-msub-row"><input name="subTitle" type="text" maxlength="1024" autocomplete="off" placeholder="하위 할 일 추가" aria-label="하위 할 일 추가">
+        <button type="button" class="btn" data-m="sub">추가</button></div></div>` : ''}
+      <p class="wide gt-mlink"><a class="btn ghost small" href="${esc(webLink(t))}" target="_blank" rel="noopener noreferrer">Google에서 열기 ↗</a>
+        <span class="muted small">별표·시간·기한은 거기서 정해요</span></p>
     </div>
     <div class="modal-actions">
       <button type="button" class="btn danger" data-m="del">삭제</button>
+      <button type="button" class="btn" data-m="done">${done ? '완료 취소' : '완료했어요'}</button>
       <span class="spacer"></span>
       <button type="button" class="btn" data-m="close">취소</button>
       <button type="submit" class="btn primary">저장</button>
     </div>`;
   mform.oninput = null;
   mform.onchange = null;
-  mform.onclick = async e => {
-    const m = e.target.closest('[data-m]')?.dataset.m;
-    if (m === 'close') modal.close();
-    if (m === 'del' && (await delTask(id))) modal.close();
+  const subInput = mform.elements.subTitle;
+  const addSubHere = async btn => {
+    if (!subInput.value.trim()) return;
+    if (btn) btn.disabled = true;
+    try {
+      await addSub(id, subInput.value);
+      subInput.value = '';
+      $kids().innerHTML = kidsHtml(id);
+      paint();
+      subInput.focus();
+    } catch (err) { toastErr(err); } finally { if (btn) btn.disabled = false; }
   };
-  mform.onsubmit = async e => {
-    e.preventDefault();
+  const $kids = () => mform.querySelector('#gt-mkids');
+  // 하위 할 일 칸에서 Enter = 하위 할 일 추가 (창 저장이 아니라)
+  if (subInput) subInput.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addSubHere(); } };
+
+  // 저장 (toggle이면 완료 상태도 바꿈) → 목록이 바뀌었으면 옮기기 → 창 닫기
+  const save = async (toggle, btn) => {
     const title = mform.elements.title.value.trim();
     if (!title) return ctx.toast('제목을 넣어 주세요.', true);
     const body = { title, notes: mform.notes.value.trim() || null, due: dueIso(mform.due.value) };
-    const done = mform.done.checked;
-    if (done !== (t.status === 'completed')) Object.assign(body, done ? { status: 'completed' } : { status: 'needsAction', completed: null });
+    if (toggle) Object.assign(body, done ? { status: 'needsAction', completed: null } : { status: 'completed' });
     const dst = mform.elements.list?.value || st.listId;
     if (dst !== st.listId && hasKids(id)) return ctx.toast('하위 할 일이 있는 할 일은 옮길 수 없어요. 하위 할 일을 먼저 하나씩 옮기거나 지운 뒤 해 주세요.', true);
-    const btn = mform.querySelector('[type=submit]');
     btn.disabled = true;
     try {
       const src = st.listId;
@@ -471,6 +513,18 @@ function openEdit(id) {
       btn.disabled = false;
       toastErr(err);
     }
+  };
+  mform.onclick = async e => {
+    const btn = e.target.closest('[data-m]');
+    const m = btn?.dataset.m;
+    if (m === 'close') modal.close();
+    if (m === 'del' && (await delTask(id))) modal.close();
+    if (m === 'done') save(true, btn);
+    if (m === 'sub') addSubHere(btn);
+  };
+  mform.onsubmit = e => {
+    e.preventDefault();
+    save(false, mform.querySelector('[type=submit]'));
   };
   if (!modal.open) modal.showModal();
   mform.elements.title.focus();
@@ -523,10 +577,17 @@ export function initTasks(c) {
         if (id === st.listId) break;
         st.listId = id;
         st.tasks = null;
+        st.subFor = '';
         saveCfg({ listId: id }).catch(toastErr);
         loadTasks();
         break;
       case 'edit': openEdit(id); break;
+      case 'sub':
+        st.subFor = st.subFor === id ? '' : id;
+        paint();
+        document.querySelector('#gt [data-gt-form=sub] [name=title]')?.focus();
+        break;
+      case 'sub-cancel': st.subFor = ''; paint(); break;
       case 'del': delTask(id); break;
       case 'cid-edit': st.editCid = true; paint(); break;
       case 'cid-cancel': st.editCid = false; paint(); tasksMount(); break;
@@ -548,5 +609,12 @@ export function initTasks(c) {
     e.preventDefault();
     if (f.dataset.gtForm === 'add') addTask(f);
     if (f.dataset.gtForm === 'cid') saveCid(f);
+    if (f.dataset.gtForm === 'sub') {
+      const btn = f.querySelector('[type=submit]');
+      btn.disabled = true;
+      addSub(f.dataset.parent, f.elements.title.value)
+        .then(() => { paint(); document.querySelector('#gt [data-gt-form=sub] [name=title]')?.focus(); })
+        .catch(err => { btn.disabled = false; toastErr(err); });
+    }
   });
 }
