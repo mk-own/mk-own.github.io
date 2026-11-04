@@ -1824,14 +1824,40 @@ function parseTradeText(text, us) {
     if (!buyT || !(buyP > 0)) { skipped++; continue; }
     rows.push({ buyT, buyP: px(buyP), qty: qty > 0 ? qty : 1, ...(sellT && sellP > 0 ? { sellT, sellP: px(sellP) } : {}) });
   }
-  // 같은 날 같은 쪽(매수·매도)은 합침: 수량 합 · 단가 = 가중 평균
-  const g = new Map();
-  const add = (t, side, q, p) => { const k = `${t}|${side}`, x = g.get(k) || { t, side, qty: 0, sum: 0, n: 0 }; x.qty += q; x.sum += q * p; x.n++; g.set(k, x); };
-  for (const r of rows) { add(r.buyT, 'buy', r.qty, r.buyP); if (r.sellT) add(r.sellT, 'sell', r.qty, r.sellP); }
-  const trades = [...g.values()].map(x => ({ t: x.t, side: x.side, qty: Math.round(x.qty * 1e6) / 1e6, price: Math.round(x.sum / x.qty * 1e4) / 1e4, n: x.n }))
-    .sort((a, b) => a.t.localeCompare(b.t) || (a.side === 'buy' ? -1 : 1));
-  return { rows: rows.length, skipped, trades };
+  // 한 줄(산 몫) → 매수 하나 + (있으면) 매도 하나
+  const list = rows.flatMap(r => [{ t: r.buyT, side: 'buy', qty: r.qty, price: r.buyP }, ...(r.sellT ? [{ t: r.sellT, side: 'sell', qty: r.qty, price: r.sellP }] : [])]);
+  return { rows: rows.length, skipped, list, trades: aggTrades(list) };
 }
+// 같은 날 같은 쪽(매수·매도)은 합침: 수량 합 · 단가 = 가중 평균 · n = 합친 줄 수
+function aggTrades(list) {
+  const g = new Map();
+  for (const r of list) { const k = `${r.t}|${r.side}`, x = g.get(k) || { t: r.t, side: r.side, qty: 0, sum: 0, n: 0 }; x.qty += r.qty; x.sum += r.qty * r.price; x.n++; g.set(k, x); }
+  return [...g.values()].map(x => ({ t: x.t, side: x.side, qty: Math.round(x.qty * 1e6) / 1e6, price: Math.round(x.sum / x.qty * 1e4) / 1e4, n: x.n }))
+    .sort((a, b) => a.t.localeCompare(b.t) || (a.side === 'buy' ? -1 : 1));
+}
+// 칸 그리드 (날짜 | 구분 | 주식 수 | 단가 | 메모): 빈 줄은 무시 · 잘못된 칸은 bad로 · 수량이 비면 1주 · 국내 단가가 1만보다 작으면 만원
+const IG_COLS = ['t', 'side', 'qty', 'price', 'memo'];
+function parseGrid(rows, us) {
+  const px = v => (us ? Math.round(v * 1e4) / 1e4 : v < 10000 ? Math.round(v * 10000) : v);
+  const list = [], bad = [];
+  let filled = 0;
+  rows.forEach((r, i) => {
+    if (![r.t, r.qty, r.price, r.memo].some(x => String(x || '').trim())) return;
+    filled++;
+    const t = impDate(r.t), q = String(r.qty || '').trim() ? impNum(r.qty) : 1, p = impNum(r.price);
+    const errs = { t: !t, qty: !(q > 0), price: !(p > 0) };
+    if (errs.t || errs.qty || errs.price) { bad.push({ i, errs }); return; }
+    list.push({ t, side: r.side === 'sell' ? 'sell' : 'buy', qty: q, price: px(p) });
+  });
+  return { rows: filled, skipped: bad.length, bad, list, trades: aggTrades(list) };
+}
+const igRowHtml = (i, v = {}, us = false) => `<div class="ig-row" data-r="${i}" role="row">
+    <label class="ig-c"><span class="ig-l">날짜</span><input data-c="t" type="text" inputmode="numeric" autocomplete="off"${i ? '' : ' placeholder="10/8"'} value="${esc(v.t ?? '')}" aria-label="${i + 1}번째 줄 날짜"></label>
+    <label class="ig-c"><span class="ig-l">구분</span><select data-c="side" aria-label="${i + 1}번째 줄 구분"><option value="buy"${v.side !== 'sell' ? ' selected' : ''}>매수</option><option value="sell"${v.side === 'sell' ? ' selected' : ''}>매도</option></select></label>
+    <label class="ig-c"><span class="ig-l">주식 수</span><input data-c="qty" type="text" inputmode="decimal" autocomplete="off"${i ? '' : ' placeholder="1"'} value="${esc(v.qty ?? '')}" aria-label="${i + 1}번째 줄 주식 수"></label>
+    <label class="ig-c"><span class="ig-l">단가</span><input data-c="price" type="text" inputmode="decimal" autocomplete="off" value="${esc(v.price ?? '')}" aria-label="${i + 1}번째 줄 단가"></label>
+    <label class="ig-c ig-memo"><span class="ig-l">메모</span><input data-c="memo" type="text" autocomplete="off" value="${esc(v.memo ?? '')}" aria-label="${i + 1}번째 줄 메모"></label>
+  </div>`;
 const fmtPx = (v, us) => (us ? `$${num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : fmtWon(v));
 function openImport() {
   const opts = chartRows.filter(x => x.code);
@@ -1844,7 +1870,11 @@ function openImport() {
       <label class="field"><span>종목</span><select name="code">${opts.map(x => `<option value="${esc(x.code)}"${x.code === cur0.code ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
       <label class="field"><span>증권사 평단 (있으면 맞춤)</span><input name="broker" type="text" inputmode="decimal" autocomplete="off"></label>
     </div>
-    <label class="field imp-text"><span>엑셀·시트에서 복사해 붙여 넣기</span><textarea name="text" rows="8" spellcheck="false" placeholder="매수일  매수  매도일  매도"></textarea></label>
+    <div class="imp-grid" role="table" aria-label="실제 매매 칸">
+      <div class="ig-head" role="row"><span>날짜</span><span>구분</span><span>주식 수</span><span class="ig-unit">단가 (${isUS(cur0) ? '$' : '원'})</span><span>메모</span></div>
+      <div class="ig-body">${Array.from({ length: 10 }, (_, i) => igRowHtml(i)).join('')}</div>
+    </div>
+    <div class="row imp-grid-tools"><button type="button" class="btn small" data-ig-add>+ 줄 추가</button><span class="muted small">엑셀·시트에서 복사해 아무 칸에나 붙여 넣으면 칸에 나눠 들어가요</span></div>
     <div class="imp-opts">
       <label class="check"><input type="checkbox" name="rebase" checked> 이 기록으로 보유를 새로 계산</label>
       <label class="check"><input type="checkbox" name="ex"> 예외로 넣기 <small class="muted">(규칙 밖 매매)</small></label>
@@ -1856,6 +1886,54 @@ function openImport() {
     </div>`;
   const f = mform;
   const rowOf = () => opts.find(x => x.code === f.elements.code.value);
+  const body = () => f.querySelector('.ig-body');
+  const gridRows = () => [...body().querySelectorAll('.ig-row')].map(r => Object.fromEntries(IG_COLS.map(c => [c, r.querySelector(`[data-c=${c}]`).value])));
+  // 그리드를 다시 읽어 미리 보기 자료로 · 잘못된 칸은 빨갛게
+  function reparse() {
+    st.parsed = parseGrid(gridRows(), isUS(rowOf()));
+    st.kind = {}; st.qty = {}; st.apply = {};
+    body().querySelectorAll('.bad').forEach(x => x.classList.remove('bad'));
+    for (const b of st.parsed.bad) for (const [c, on] of Object.entries(b.errs)) if (on) body().children[b.i].querySelector(`[data-c=${c}]`).classList.add('bad');
+  }
+  const ensureRows = n => { const b = body(); for (let i = b.children.length; i < n; i++) b.insertAdjacentHTML('beforeend', igRowHtml(i)); };
+  const cellAt = (r, c) => body().children[r]?.querySelector(`[data-c=${IG_COLS[c]}]`);
+  const setCell = (r, c, v) => { const el = cellAt(r, c); if (!el) return; if (el.tagName === 'SELECT') el.value = /^(매도|sell|s)$/i.test(String(v).trim()) || v === 'sell' ? 'sell' : 'buy'; else el.value = String(v ?? '').trim(); };
+  // 엑셀·시트 덩어리를 붙여 넣으면: 하이닉스식(산 날·값·판 날·값 한 줄)·SOXL식(날짜·값·수량) 표는 매수·매도 줄로 바꿔 넣고, 그 밖엔 붙인 칸부터 그대로 나눠 넣음
+  const gridEl = f.querySelector('.imp-grid'); // 창을 열 때마다 새로 그려지므로 여기에 붙임 (mform에 쌓이지 않게)
+  gridEl.addEventListener('paste', e => {
+    const cell = e.target.closest?.('.ig-row [data-c]');
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (!cell || !/[\t\n]/.test(text.trim())) return;
+    e.preventDefault();
+    const r0 = [...body().children].indexOf(cell.closest('.ig-row')), c0 = IG_COLS.indexOf(cell.dataset.c);
+    const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim());
+    const gridLike = lines.filter(l => /^(매수|매도|buy|sell)$/i.test((l.split('\t')[1] || '').trim())).length * 2 >= lines.length;
+    const P = gridLike ? null : parseTradeText(text, isUS(rowOf()));
+    if (P?.list.length) {
+      ensureRows(r0 + P.list.length + 1);
+      P.list.forEach((x, k) => { const r = r0 + k; setCell(r, 0, x.t); setCell(r, 1, x.side); setCell(r, 2, x.qty); setCell(r, 3, x.price); });
+    } else {
+      ensureRows(r0 + lines.length + 1);
+      lines.forEach((l, k) => l.split('\t').forEach((v, j) => { if (c0 + j < IG_COLS.length) setCell(r0 + k, c0 + j, v); }));
+    }
+    reparse(); paint();
+  });
+  // 칸 옮기기: Enter·↑↓ = 위아래 줄 같은 칸 · ←→ = 글자 끝에서 옆 칸 (Tab은 원래대로)
+  gridEl.addEventListener('keydown', e => {
+    const cell = e.target.closest?.('.ig-row [data-c]');
+    if (!cell) return;
+    const r = [...body().children].indexOf(cell.closest('.ig-row')), c = IG_COLS.indexOf(cell.dataset.c);
+    const isSel = cell.tagName === 'SELECT', atStart = !isSel && cell.selectionStart === 0 && cell.selectionEnd === 0, atEnd = !isSel && cell.selectionStart === cell.value.length;
+    let to = null;
+    if (e.key === 'Enter') { e.preventDefault(); ensureRows(r + 2); to = [r + 1, c]; }
+    else if (e.key === 'ArrowDown' && !isSel) to = [r + 1, c];
+    else if (e.key === 'ArrowUp' && !isSel) to = [r - 1, c];
+    else if (e.key === 'ArrowRight' && (isSel || atEnd)) to = [r, c + 1];
+    else if (e.key === 'ArrowLeft' && (isSel || atStart)) to = [r, c - 1];
+    if (!to) return;
+    const el = cellAt(to[0], to[1]);
+    if (el) { e.preventDefault(); el.focus(); if (el.select) el.select(); }
+  });
   // 미리 보기 계산: 같은 날 기존 기록 (같으면 건너뜀 · 다르면 건너뛰기/바꾸기) · 판 날 구분(평단보다 비싸면 익절) · 보유
   function plan() {
     const r = rowOf(), us = isUS(r), rec = stockRecOf(r.code), old = tradesOf(r);
@@ -1889,7 +1967,7 @@ function openImport() {
   function paint() {
     const pl = plan(), { us, list, hold, P } = pl, cur = us ? '$' : '';
     const box = f.querySelector('#imp-prev'), save = f.querySelector('[type=submit]');
-    if (!P.trades.length) { box.innerHTML = P.rows || P.skipped ? `<p class="err">읽은 기록이 없어요. 날짜와 값이 있는 줄을 붙여 넣어 주세요.</p>` : ''; save.disabled = true; return; }
+    if (!P.trades.length) { box.innerHTML = P.rows ? `<p class="err">넣을 기록이 없어요. 빨간 칸(날짜·단가)을 고쳐 주세요.</p>` : ''; save.disabled = true; return; }
     const st8 = { add: '새로', same: '이미 있음 (건너뜀)', bad: '같은 날 매수·매도는 하루 한 기록이라 못 넣어요' };
     const statusHtml = x => (x.status === 'skip' || x.status === 'replace'
       ? `<label class="imp-conf">같은 날 기존 기록 (${esc(KIND[x.old.kind])} ${fmtNum(x.old.qty)}주 ${esc(fmtPx(x.old.price, us))}) <select data-imp-apply="${x.i}"><option value="skip"${x.status === 'skip' ? ' selected' : ''}>건너뛰기</option><option value="replace"${x.status === 'replace' ? ' selected' : ''}>바꾸기</option></select></label>`
@@ -1907,7 +1985,7 @@ function openImport() {
     const avgTxt = v => (us ? `$${num(v).toFixed(4)}` : fmtWon(v));
     const nowH = pl.rec ? `${fmtNum(pl.rec.qty || 0)}주 · 평단 ${us ? avgTxt(pl.rec.avg || 0) : fmtWon(pl.rec.avg || 0)}` : '없음';
     const nB = list.filter(x => x.side === 'buy').length, nS = list.length - nB, nM = list.filter(x => x.n > 1).length;
-    box.innerHTML = `<p class="imp-count">줄 ${P.rows}개 → 기록 ${list.length}건 (매수 ${nB}${nS ? ` · 매도 ${nS}` : ''})${nM ? ` · 같은 날 합침 ${nM}건` : ''}${P.skipped ? ` · 건너뛴 줄 ${P.skipped}개 (값 없음·합계·머리줄)` : ''}</p>
+    box.innerHTML = `<p class="imp-count">줄 ${P.rows}개 → 기록 ${list.length}건 (매수 ${nB}${nS ? ` · 매도 ${nS}` : ''})${nM ? ` · 같은 날 합침 ${nM}건` : ''}${P.skipped ? ` · <span class="err">빨간 칸 ${P.skipped}줄은 빠져요</span>` : ''}</p>
       ${body}
       <div class="imp-hold">
         <p>저장하면 <b>보유 ${fmtNum(hold.qty)}주 · 평단 ${avgTxt(pl.broker ?? hold.avg)}</b>${pl.broker ? ` <small>계산 평단 ${avgTxt(hold.avg)} · 증권사 평단 ${avgTxt(pl.broker)} 로 맞춤</small>` : ''}</p>
@@ -1918,7 +1996,7 @@ function openImport() {
   }
   f.oninput = e => {
     const t = e.target;
-    if (t.name === 'text' || t.name === 'code') { st.parsed = parseTradeText(f.elements.text.value, isUS(rowOf())); st.kind = {}; st.qty = {}; st.apply = {}; }
+    if (t.dataset.c || t.name === 'code') reparse();
     if (t.dataset.impQty != null) { st.qty[t.dataset.impQty] = num(t.value) || 0; }
     if (t.dataset.impQty != null) return; // 숫자를 치는 동안은 다시 그리지 않음 (change 때)
     paint();
@@ -1927,10 +2005,14 @@ function openImport() {
     const t = e.target;
     if (t.dataset.impKind != null) st.kind[t.dataset.impKind] = t.value;
     if (t.dataset.impApply != null) st.apply[t.dataset.impApply] = t.value;
-    if (t.name === 'code') { st.parsed = parseTradeText(f.elements.text.value, isUS(rowOf())); st.kind = {}; st.qty = {}; st.apply = {}; }
+    if (t.dataset.c || t.name === 'code') reparse();
+    if (t.name === 'code') f.querySelector('.ig-unit').textContent = `단가 (${isUS(rowOf()) ? '$' : '원'})`;
     paint();
   };
-  f.onclick = e => { if (e.target.closest('[data-m=close]')) modal.close(); };
+  f.onclick = e => {
+    if (e.target.closest('[data-m=close]')) modal.close();
+    if (e.target.closest('[data-ig-add]')) { const n = body().children.length; ensureRows(n + 1); cellAt(n, 0).focus(); }
+  };
   f.onsubmit = async e => {
     e.preventDefault();
     const pl = plan();
@@ -1961,7 +2043,7 @@ function openImport() {
   modal.addEventListener('close', () => { resetModalHandlers(); f.onclick = null; f.onsubmit = null; }, { once: true });
   paint();
   if (!modal.open) modal.showModal();
-  f.elements.text.focus();
+  cellAt(0, 0).focus();
 }
 
 // 기간 = 시작일 뒤 처음 산 날 ~ 마지막 날. 실제 매매 수익 = 판 것만 (실현 손익, ÷ 금액 = %).
