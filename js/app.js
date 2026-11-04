@@ -1,8 +1,9 @@
 import { legacyOpen } from './crypto.js';
 import { parseBookmarks, SEP } from './bookmarks.js';
-import { COLLECTIONS, SECTIONS, ASSET_KEYS, VIEWS, DAYS, num, whenText, isUS } from './schemas.js';
+import { COLLECTIONS, SECTIONS, VIEWS, DAYS, num, whenText, isUS } from './schemas.js';
 import * as store from './store.js';
 import { decide, applyFill, todayInputs, simulate, ma200Line } from './swing.js';
+import { initTasks, tasksHtml, tasksMount, forgetGoogleToken } from './tasks.js';
 
 const { S } = store;
 const LS = { prefs: 'hub.prefs', legacyCache: 'hub.cache', legacyPlain: 'hub.plain', legacyGh: 'hub.github' };
@@ -24,18 +25,6 @@ const fmtNum = v => (v === '' || v == null || !Number.isFinite(+v) ? '' : (+v).t
 const fmtWon = v => (v === '' || v == null ? '' : `${Math.round(num(v)).toLocaleString('ko-KR')}원`);
 const fmtUsd = v => (v === '' || v == null ? '' : `$${num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const fmtMoney = (v, cur) => (cur === '$' ? fmtUsd(v) : fmtWon(v));
-
-function fmtKor(n) {
-  const neg = n < 0;
-  n = Math.abs(Math.round(n));
-  const eok = Math.floor(n / 1e8);
-  const man = Math.floor((n % 1e8) / 1e4);
-  let s = '';
-  if (eok) s += `${eok.toLocaleString('ko-KR')}억 `;
-  if (man) s += `${man.toLocaleString('ko-KR')}만`;
-  if (!eok && !man) s = n.toLocaleString('ko-KR');
-  return `${neg ? '-' : ''}${s.trim()}원`;
-}
 
 function fmtSize(n) {
   if (n < 1024) return `${n}B`;
@@ -468,7 +457,7 @@ async function seedBookmarks() {
 function enterApp() {
   $('#lock').hidden = true;
   $('#app').hidden = false;
-  history.replaceState(null, '', location.pathname + (location.hash.startsWith('#/') ? location.hash : '#/home'));
+  history.replaceState(null, '', location.pathname + (location.hash.startsWith('#/') ? location.hash : '#/tasks'));
   render();
   renderSync();
   store.sessionInfo().then(si => { ui.session = si; armIdle(); });
@@ -514,6 +503,7 @@ function armIdle() {
 }
 
 async function lockNow() {
+  forgetGoogleToken();
   await store.forgetTab();
   if (S.dirty.size) await Promise.race([store.upload(), new Promise(r => setTimeout(r, 5000))]);
   location.reload();
@@ -541,17 +531,19 @@ addEventListener('beforeunload', e => {
 // ---------- 화면 ----------
 
 function parseRoute() {
-  const [sec = 'home', tab] = location.hash.replace(/^#\/?/, '').split('/');
+  const [sec = 'tasks', tab] = location.hash.replace(/^#\/?/, '').split('/');
   const s = SECTIONS.find(x => x.id === sec) || SECTIONS[0];
   return { s, tab: s.tabs ? (s.tabs.includes(tab) ? tab : s.tabs[0]) : null };
 }
 
 function render() {
   if (!S.data) return;
+  // 예전 홈 주소(#/home)는 할 일로
+  if (/^#\/?home(\/|$)/.test(location.hash)) history.replaceState(null, '', location.pathname + '#/tasks');
   const { s, tab } = parseRoute();
   $('#nav').innerHTML = SECTIONS.map(x => `<a href="#/${x.id}" class="${x.id === s.id ? 'on' : ''}">${x.title}</a>`).join('');
   const v = $('#view');
-  if (s.id === 'home') v.innerHTML = homeHtml();
+  if (s.id === 'tasks') { v.innerHTML = tokenBanner() + tasksHtml(); tasksMount(); }
   else if (s.id === 'links') v.innerHTML = linksHtml();
   else if (s.id === 'library') v.innerHTML = libraryHtml();
   else v.innerHTML = sectionHtml(s, tab);
@@ -568,46 +560,10 @@ addEventListener('hashchange', () => {
   scrollTo(0, 0);
 });
 
-// ----- 홈 -----
+// ----- 공통 -----
 
 function sumOf(k, fn) {
   return fn ? items(k).reduce((a, r) => a + fn(r), 0) : 0;
-}
-
-function totals() {
-  const parts = [];
-  let assets = 0;
-  let debt = 0;
-  for (const k of ASSET_KEYS) {
-    const def = COLLECTIONS[k];
-    if (def.value) {
-      const v = sumOf(k, def.value);
-      parts.push({ k, title: k === 'insurance' ? '보험(해지환급금)' : def.title, v });
-      assets += v;
-    }
-    debt += sumOf(k, def.debt);
-  }
-  return {
-    parts, assets, debt, net: assets - debt,
-    premium: sumOf('insurance', COLLECTIONS.insurance.monthly),
-    edu: sumOf('education', COLLECTIONS.education.monthly),
-  };
-}
-
-function upcoming(days = 90) {
-  const today = ymd();
-  const limit = ymd(new Date(Date.now() + days * 864e5));
-  const out = [];
-  for (const [k, def] of Object.entries(COLLECTIONS)) {
-    for (const f of def.fields) {
-      if (!f.due) continue;
-      for (const r of items(k)) {
-        const d = r[f.k];
-        if (d && d >= today && d <= limit) out.push({ d, what: f.due, name: def.label ? def.label(r) : '', k, id: r.id });
-      }
-    }
-  }
-  return out.sort((a, b) => a.d.localeCompare(b.d));
 }
 
 const activeClasses = () => items('education').filter(r => Array.isArray(r.days) && r.days.length && r.t1 && r.status !== '완료' && r.status !== '중단');
@@ -620,47 +576,6 @@ function tokenBanner() {
   if (d > 30) return '';
   return `<div class="banner ${d <= 7 ? 'bad' : ''}">⚠ GitHub 토큰이 ${d < 0 ? '만료됐어요' : d === 0 ? '오늘 만료돼요' : `${d}일 뒤 만료돼요`} (${exp}).
     <button class="btn small" type="button" data-act="settings">새 토큰 넣기</button></div>`;
-}
-
-function homeHtml() {
-  const t = totals();
-
-  const ups = upcoming();
-  const upHtml = ups.length
-    ? `<ul class="up-list">${ups.slice(0, 12).map(u => {
-      const dd = daysUntil(u.d);
-      return `<li data-act="edit" data-key="${u.k}" data-id="${u.id}" tabindex="0">
-          <span class="dday ${dd <= 14 ? 'soon' : ''}">${dd === 0 ? 'D-DAY' : `D-${dd}`}</span>
-          <span class="up-what">${esc(u.what)}</span>
-          <span class="up-name">${esc(u.name)}</span>
-          <span class="up-date muted">${u.d}</span>
-        </li>`;
-    }).join('')}</ul>`
-    : '<p class="muted">90일 안에 다가오는 만기·예정일이 없어요.</p>';
-
-  const today = todayName();
-  const todays = activeClasses().filter(r => r.days.includes(today)).sort((a, b) => a.t1.localeCompare(b.t1));
-  const todayHtml = todays.length
-    ? `<ul class="today-list">${todays.map(r => `<li data-act="edit" data-key="education" data-id="${r.id}" tabindex="0">
-        <span class="today-time">${esc(r.t1)}${r.t2 ? `~${esc(r.t2)}` : ''}</span>
-        <span class="up-name">${esc(r.name)}</span><span class="muted">${esc(r.person || '')}</span></li>`).join('')}</ul>`
-    : `<p class="muted">오늘(${today}) 일정이 없어요.</p>`;
-
-  const pins = items('links').filter(l => l.pin);
-  const pinHtml = pins.length
-    ? `<div class="link-grid">${pins.map(linkCard).join('')}</div>`
-    : '<p class="muted">링크에서 <b>홈에 고정</b>을 켜면 여기 보여요.</p>';
-
-  const kpi = (label, value, href) => `<a class="kpi" href="${href}"><span class="kpi-label">${label}</span><span class="kpi-val">${value}</span></a>`;
-
-  return `
-    ${tokenBanner()}
-    <section class="kpis">
-      ${kpi('총자산', fmtKor(t.assets), '#/assets')}
-    </section>
-    <section class="card"><h2>오늘 일정 <small class="muted">${today}요일</small></h2>${todayHtml}
-      <h2 class="h2-gap">다가오는 일정 <small class="muted">90일</small></h2>${upHtml}</section>
-    <section class="card"><h2>고정 링크</h2>${pinHtml}</section>`;
 }
 
 // ----- 목록 섹션 -----
@@ -1958,6 +1873,8 @@ function openEditor(key, id, preset = {}) {
   mform.querySelector('input:not([type=checkbox]), select, textarea')?.focus();
 }
 
+initTasks({ esc, toast, modal, mform, view });
+
 // ---------- 파일 보기 ----------
 
 const viewer = $('#viewer');
@@ -2259,6 +2176,7 @@ function openSettings() {
       case 'forget': guard(async () => {
         if (!confirm('이 기기의 연결을 끊을까요?\nGitHub에 있는 데이터는 그대로이고, 토큰이나 QR로 다시 연결하면 모두 돌아와요.\n(아직 못 올린 변경이 있으면 끊지 않아요)')) return;
         await store.forgetDevice();
+        forgetGoogleToken();
         location.reload();
       }); break;
     }
@@ -2274,7 +2192,7 @@ async function boot() {
   const linked = store.deviceFromLink(location.hash);
   if (linked) {
     await store.saveDevice(linked);
-    history.replaceState(null, '', location.pathname + '#/home');
+    history.replaceState(null, '', location.pathname + '#/tasks');
     toast('이 기기를 연결했어요. 비밀번호를 넣으세요.');
   }
   const d = await store.loadDevice();

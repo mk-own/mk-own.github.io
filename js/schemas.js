@@ -232,7 +232,7 @@ export const COLLECTIONS = {
       { k: 'name', l: '이름', req: true },
       { k: 'url', l: '주소', type: 'url', req: true },
       { k: 'folder', l: '폴더', type: 'folder' },
-      { k: 'pin', l: '홈에 고정', type: 'check' },
+      { k: 'pin', l: '★ 즐겨찾기', type: 'check' },
       memo,
     ],
     cols: [],
@@ -247,7 +247,7 @@ export const COLLECTIONS = {
 export const VIEWS = { timetable: '시간표' };
 
 export const SECTIONS = [
-  { id: 'home', title: '홈' },
+  { id: 'tasks', title: '할 일' },
   { id: 'assets', title: '자산관리', tabs: ['stocks', 'pension', 'savings', 'insurance', 'realestate', 'loans'] },
   { id: 'education', title: '교육', tabs: ['education', 'timetable'] },
   { id: 'health', title: '건강', tabs: ['records', 'checkups', 'meds', 'hospitals'] },
@@ -255,7 +255,7 @@ export const SECTIONS = [
   { id: 'links', title: '링크' },
 ];
 
-export const ASSET_KEYS = SECTIONS[1].tabs;
+export const ASSET_KEYS = SECTIONS.find(s => s.id === 'assets').tabs;
 
 export function emptyData() {
   return {
