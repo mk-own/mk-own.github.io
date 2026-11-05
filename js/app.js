@@ -1170,7 +1170,7 @@ function swingItemHtml(r) {
   const rp = rulePos(r), units = Math.round(num(rp.units));
   return `<div class="sw-item" data-sw="${r.id}">
     <div class="sw-head"><b>${esc(r.name)}</b>
-      <span class="muted small">${units ? `투자금의 ${units * 20}% 샀음 (${fmtMoney(num(r.account) * units / 5, cur)} / ${fmtMoney(num(r.account), cur)})` : `투자금 ${fmtMoney(num(r.account), cur)}`}${num(rp.qty) ? ` · ${fmtNum(rp.qty)}주 평단 ${fmtMoney(rp.avg, cur)}` : ''}</span>${exTag(r, cur)}</div>
+      <span class="muted small">${units ? `투자금의 ${units * 20}% 샀음 (${fmtMoney(num(r.account) * units / 5, cur)} / ${fmtMoney(num(r.account), cur)})` : `투자금 ${fmtMoney(num(r.account), cur)}`}${num(rp.qty) ? ` · ${fmtNum(rp.qty)}주 평단 ${fmtMoney(rp.avg, cur)}` : ''}</span>${exTag(r, cur)}<span class="sw-due" data-slot-time="${us ? 'us' : 'kr'}">${slotTime(us ? 'us' : 'kr')}</span></div>
     <div class="sw-inputs" data-sw-tip="${r.id}" title="${esc(v.autoNote || '')}">
       <label class="field"><span>${us ? '어젯밤 시가' : '오늘 시가'}</span><input type="number" step="any" inputmode="decimal" data-sw-k="open" value="${esc(v.open ?? '')}"></label>
       <label class="field"><span>${us ? '어젯밤 종가' : '예상체결가 (15:20)'}</span><input type="number" step="any" inputmode="decimal" data-sw-k="close" value="${esc(v.close ?? '')}"></label>
@@ -1185,15 +1185,23 @@ function swingItemHtml(r) {
 // 위: 종목마다 "지금 할 일" 큰 카드 (20:00 전엔 국내 먼저, 20:00부터 미국 먼저) → 차트(칩은 차트 종목만 고름) → 고급
 const SLOT = { kr: { at: 15 * 60 + 20, hm: '15:20', name: '국내' }, us: { at: 20 * 60, hm: '20:00', name: '미국' } };
 const kstMin = () => { const z = zoned('Asia/Seoul'); return { m: z.h * 60 + Number(z.hm.slice(3)), wd: z.wd }; };
+// 카드 띠 오른쪽: 날짜·마감 ("11/5 (목) 15:20까지"). 남은 시간은 안 셈 · KST 날짜
+const dayLabel = (date, wd) => `${md(date)} (${'일월화수목금토'[wd]})`;
+const prevKst = z => { const d = new Date(z.date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return { date: d.toISOString().slice(0, 10), wd: (z.wd + 6) % 7 }; };
 function slotTime(k) {
-  const { m, wd } = kstMin();
-  if (wd === 0 || wd === 6) return '주말 · 장이 쉬어요';
-  const left = SLOT[k].at - m;
-  if (left > 0) return `${SLOT[k].hm}까지 ${left >= 60 ? `${Math.floor(left / 60)}시간 ` : ''}${left % 60}분`;
-  if (k === 'kr') return m < 15 * 60 + 30 ? '지금 동시호가 (15:30 체결)' : '오늘 장 마감 (15:30)';
-  return '지금 주문';
+  const z = zoned('Asia/Seoul'), m = z.h * 60 + Number(z.hm.slice(3)), weekend = z.wd === 0 || z.wd === 6;
+  if (k === 'kr') {
+    if (weekend) return `${dayLabel(z.date, z.wd)} 장 쉼`;
+    return `${dayLabel(z.date, z.wd)} ${m < 15 * 60 + 20 ? '15:20까지' : m < 15 * 60 + 30 ? '15:30 체결' : '장 마감'}`;
+  }
+  // 미국: 한국 20:00부터 미국 장이 끝날 때(뉴욕 16:00)까지는 "오늘 밤 주문" (자정을 넘기면 시작한 날 날짜로)
+  const ny = zoned('America/New_York'), nyM = ny.h * 60 + Number(ny.hm.slice(3));
+  const night = ny.wd > 0 && ny.wd < 6 && nyM < 16 * 60 && (m >= 20 * 60 || z.h < 12);
+  if (night) { const d = m >= 20 * 60 ? z : prevKst(z); return `${dayLabel(d.date, d.wd)} 오늘 밤 주문`; }
+  if (weekend) return `${dayLabel(z.date, z.wd)} 장 쉼`;
+  return `${dayLabel(z.date, z.wd)} 20:00까지`;
 }
-// 남은 시간 글자는 30초마다 고침 (카드 순서는 다음에 화면을 그릴 때 바뀜)
+// 띠 글자는 30초마다 다시 셈 (15:20·15:30·20:00·미국 장 마감에 맞춰 바뀌도록. 카드 순서는 다음에 화면을 그릴 때)
 setInterval(() => document.querySelectorAll('[data-slot-time]').forEach(el => { el.textContent = slotTime(el.dataset.slotTime); }), 30e3);
 
 function swingMobileHtml(list, r, preview) {

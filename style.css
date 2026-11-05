@@ -688,6 +688,8 @@ html, body { overscroll-behavior-y: contain; }
 .ord-badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 0 7px; border-radius: 6px; border: 1.5px solid var(--st-rest); color: var(--st-rest); vertical-align: 1px; }
 .ord-fill { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
 .ord-fill b { color: var(--text); font-weight: 700; }
+/* PC 오늘 할 일 머리: 날짜·마감 (휴대폰 카드 띠와 같은 글) */
+.sw-due { margin-left: auto; font-size: 12px; font-weight: 700; padding: 0 8px; border-radius: 6px; background: var(--surface-2); color: var(--text-2); }
 /* 예외 매매 꼬리표 · 원장 나눔 */
 .ex-tag { display: inline-block; margin-left: 4px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 5px; border: 1px solid var(--muted); color: var(--text-2); vertical-align: 1px; }
 .ex-split { display: block; font-size: 11px; color: var(--text-2); }
