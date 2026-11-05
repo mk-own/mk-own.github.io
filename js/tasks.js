@@ -335,14 +335,22 @@ async function login(btn) {
   }
 }
 
+// 로그아웃: 휴대폰(설정 › 고급 설정)에선 한 번 더 묻는다. 했으면 true
 function logout() {
+  if (matchMedia('(max-width: 599px)').matches && !confirm('Google 할 일에서 로그아웃할까요?\n할 일은 Google에 그대로 있고, 다시 로그인하면 돌아와요.')) return false;
   const v = token?.v;
   forgetGoogleToken();
   Object.assign(st, { lists: null, tasks: null, listId: '', loading: false, seq: st.seq + 1 });
   if (v && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(v, () => {});
   paint();
   ctx.toast('로그아웃했어요. 할 일은 Google에 그대로 있어요.');
+  return true;
 }
+
+// 설정 › 고급 설정 › Google 할 일 연결 (휴대폰)
+export const googleState = () => ({ clientId: !!cfg().clientId, loggedIn: !!cfg().clientId && tokenOk() });
+export function editGoogleCid() { st.editCid = true; paint(); }
+export const logoutGoogle = () => logout();
 
 async function toggleDone(id, checked, box) {
   const t = findTask(id);
@@ -598,6 +606,7 @@ export function initTasks(c) {
       case 'cid-clear': clearCid(); break;
     }
   });
+  view.addEventListener('focusin', e => { e.target.closest?.('.gt-add')?.classList.add('m-open'); });
   view.addEventListener('change', e => {
     const id = e.target.dataset?.gtDone;
     if (id) toggleDone(id, e.target.checked, e.target);

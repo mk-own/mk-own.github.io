@@ -801,13 +801,37 @@ html, body { overscroll-behavior-y: contain; }
 .gt-mlink { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 0; }
 .gt-mlink .btn { display: inline-flex; align-items: center; text-decoration: none; padding-left: 0; color: var(--accent); }
 
-/* ===== 휴대폰 (폭 600px 미만) 주식 화면: 지금 할 일 먼저 · 덜 쓰는 것은 접기. PC와 다른 화면에는 영향 없음 ===== */
+/* ===== 휴대폰 (폭 600px 미만): 아래 메뉴 · 지금 할 일 먼저 · 덜 쓰는 것은 접기. PC에는 영향 없음 ===== */
+.tabbar, .top-title { display: none; }
 @media (max-width: 599px) {
-  /* 누르기 쉬운 크기 (주식 화면 안에서만) */
-  .m-swing .btn, .m-adv .btn { height: 44px; }
-  .m-swing .btn.small, .m-adv .btn.small { height: 40px; }
-  .m-swing .chip { min-height: 40px; }
-  .m-swing input[type=checkbox] { width: 22px; height: 22px; min-height: 22px; }
+  /* 위 막대: 한 줄 (화면 이름 · 저장 상태 · 잠금). 메뉴는 아래 막대로, 설정은 더보기로 */
+  .topbar { flex-wrap: nowrap; gap: 8px; padding: 6px 8px 6px 16px; min-height: 52px; }
+  .brand, .nav, #settings-btn { display: none; }
+  .top-title { display: block; flex: 1; min-width: 0; margin: 0; font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-title small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 6px; }
+  .top-actions { margin-left: auto; }
+  .top-actions .icon-btn { width: 44px; height: 44px; }
+  .sec-head > h1 { display: none; }
+  .sec-head:not(:has(> :not(h1))) { display: none; }
+  .view { padding: 12px 16px calc(84px + env(safe-area-inset-bottom)); }
+
+  /* 아래 메뉴 */
+  .tabbar {
+    display: grid; grid-template-columns: repeat(4, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    height: calc(60px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+    background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(10px); border-top: 1px solid var(--line);
+  }
+  .tabbar a { display: grid; place-items: center; align-content: center; gap: 2px; text-decoration: none; color: var(--muted); font-size: 12px; font-weight: 600; min-height: 48px; }
+  .tabbar a.on { color: var(--accent); }
+  .toast { bottom: calc(76px + env(safe-area-inset-bottom)); }
+
+  /* 누르기 쉬운 크기 */
+  .btn { height: 44px; }
+  .btn.small { height: 40px; }
+  .chip { min-height: 40px; }
+  input[type=checkbox] { width: 22px; height: 22px; min-height: 22px; }
+  .tabs { margin-bottom: 12px; }
+  .tabs a { padding: 11px 12px; }
 
   /* 접는 칸 공통 */
   .m-fold > summary { list-style: none; cursor: pointer; min-height: 44px; display: flex; align-items: center; flex-wrap: wrap; gap: 0 6px; font-size: 14px; font-weight: 600; color: var(--text-2); }
@@ -897,13 +921,13 @@ html, body { overscroll-behavior-y: contain; }
   .m-sim-more > summary::after { display: none; }
   .m-sim-more .sim-sum { margin-top: 4px; }
 
-  /* 고급 (주식 화면 맨 아래): 주식 원장 */
+  /* 고급 (주식 화면 맨 아래) */
   .m-adv { background: transparent; border: 1px dashed var(--line); box-shadow: none; padding: 4px 14px; }
   .m-adv > summary { color: var(--muted); }
   .m-adv-body { padding-bottom: 10px; }
   .m-adv-h { margin: 6px 0 8px; font-size: 15px; color: var(--text); }
 
-  /* 주식 원장: 표 대신 카드 */
+  /* 표 대신 카드 */
   .m-sort { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
   .m-sort select { width: auto; flex: 1; min-height: 40px; }
   .m-cards { display: grid; gap: 8px; }
@@ -913,6 +937,38 @@ html, body { overscroll-behavior-y: contain; }
   .m-kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 6px 0 0; font-size: 13px; }
   .m-kv dt { color: var(--muted); }
   .m-kv dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+
+  /* 더보기 */
+  .menu-list { padding: 0; overflow: hidden; }
+  .menu-list > a, .menu-list > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 54px; padding: 0 16px; border: 0; border-top: 1px solid var(--line); background: none; font: inherit; font-size: 16px; color: var(--text); text-decoration: none; text-align: left; cursor: pointer; }
+  .menu-list > :first-child { border-top: 0; }
+  .menu-list small { display: block; font-size: 12px; }
+  .menu-list .chev { color: var(--muted); font-size: 20px; }
+
+  /* 설정: 고급 설정 칸 */
+  .set-adv { border: 1px dashed var(--line); border-radius: 12px; margin-top: 16px; padding: 0 10px 4px; }
+  .set-adv > summary { list-style: none; cursor: pointer; min-height: 48px; display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 700; color: var(--text-2); }
+  .set-adv > summary::-webkit-details-marker { display: none; }
+  .set-adv > summary::after { content: "\25B8"; color: var(--text-2); }
+  .set-adv[open] > summary::after { content: "\25BE"; }
+  .set-adv > p { margin: 0 0 10px; }
+
+  /* 할 일: 위 버튼은 새로고침만 (연결 설정·로그아웃은 설정 > 고급 설정), 줄에는 체크·제목·마감만 (수정·하위·삭제는 줄을 누르면) */
+  .sec-actions [data-gt=cid-edit], .sec-actions [data-gt=logout], .gt-login [data-gt=cid-edit] { display: none; }
+  .sec-actions [data-gt=refresh] { width: 44px; padding: 0; }
+  .sec-head:has([data-gt=refresh]) { float: right; margin: 0 0 8px 8px; }
+  .gt-card { clear: both; }
+  .gt-lists .chip { min-height: 40px; padding: 0 16px; }
+  .gt-add { grid-template-columns: 1fr auto; }
+  .gt-add [name=title] { grid-column: 1; grid-row: 1; min-height: 44px; }
+  .gt-add [type=submit] { grid-column: 2; grid-row: 1; }
+  .gt-add [name=due], .gt-add [name=notes] { grid-column: 1 / -1; display: none; }
+  .gt-add.m-open [name=due], .gt-add.m-open [name=notes] { display: block; }
+  .gt-item { align-items: center; gap: 12px; }
+  .gt-item > input[type=checkbox] { width: 24px; height: 24px; min-height: 24px; margin: 0; }
+  .gt-main { min-height: 48px; padding: 8px 4px; }
+  .gt-del, .gt-sub-add { display: none; }
+  .gt-done > summary { min-height: 44px; display: flex; align-items: center; }
 }
 
 /* 어두운 테마: 카드 띠 글자는 어둡게 (밝은 상태색 위) */

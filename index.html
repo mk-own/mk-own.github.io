@@ -26,6 +26,7 @@
   <div id="app" hidden>
     <header class="topbar">
       <a class="brand" href="#/tasks">My Hub</a>
+      <h1 id="top-title" class="top-title"></h1>
       <nav id="nav" class="nav"></nav>
       <div class="top-actions">
         <button id="sync" class="sync ok" type="button">✓ 저장됨</button>
@@ -38,6 +39,8 @@
       </div>
     </header>
     <main id="view" class="view"></main>
+    <!-- 휴대폰(폭 600px 미만)에서만 보이는 아래 메뉴 -->
+    <nav id="tabbar" class="tabbar" aria-label="메뉴"></nav>
   </div>
 
   <dialog id="modal"><form id="modal-form" method="dialog"></form></dialog>

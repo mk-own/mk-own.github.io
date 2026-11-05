@@ -3,7 +3,7 @@ import { parseBookmarks, SEP } from './bookmarks.js';
 import { COLLECTIONS, SECTIONS, VIEWS, DAYS, num, whenText, isUS, BROKERS } from './schemas.js';
 import * as store from './store.js';
 import { decide, applyFill, todayInputs, simulate, ma200Line, levels, TP, N } from './swing.js';
-import { initTasks, tasksHtml, tasksMount, forgetGoogleToken, refreshTasks } from './tasks.js';
+import { initTasks, tasksHtml, tasksMount, forgetGoogleToken, refreshTasks, googleState, editGoogleCid, logoutGoogle } from './tasks.js';
 
 const { S } = store;
 const LS = { prefs: 'hub.prefs', legacyCache: 'hub.cache', legacyPlain: 'hub.plain', legacyGh: 'hub.github' };
@@ -17,11 +17,13 @@ const ymd = (d = new Date()) => new Date(d - d.getTimezoneOffset() * 6e4).toISOS
 const daysUntil = s => Math.round((new Date(s) - new Date(ymd())) / 864e5);
 
 const items = k => S.data.items[k];
-const ui = { sort: {}, q: {}, folder: '', editLinks: false, fileMode: '', ttPerson: '', ttDay: '', libFolder: '', swing: {}, chartId: '', sim: {}, simAll: false, fold: {} };
+const ui = { sort: {}, q: {}, folder: '', editLinks: false, fileMode: '', ttPerson: '', ttDay: '', libFolder: '', swing: {}, chartId: '', sim: {}, simAll: false, fold: {}, lastAsset: 'pension' };
 
-// 휴대폰(폭 600px 미만) 주식 화면: "지금 할 일" 먼저 · 덜 쓰는 것은 접어 둠. PC 화면은 그대로
+// 휴대폰(폭 600px 미만): 아래 메뉴 · 주식은 "지금 할 일" 먼저 · 덜 쓰는 것은 접어 둠. PC 화면은 그대로
 const MOBILE = matchMedia('(max-width: 599px)');
 const isMobile = () => MOBILE.matches;
+// 휴대폰 설정 › 고급 설정: 바꾸는 버튼은 한 번 더 물음 (PC는 지금 그대로)
+const askM = msg => !isMobile() || confirm(msg);
 // 접는 칸(details[data-fold])은 다시 그려도 열린 채로
 const foldAttr = k => `data-fold="${k}"${ui.fold[k] ? ' open' : ''}`;
 
@@ -568,9 +570,15 @@ function render() {
   const seen = routeOf(location.hash);
   if (seen && !$('#app').hidden) lsSet(LAST_ROUTE, seen);
   const { s, tab } = parseRoute();
-  $('#nav').innerHTML = SECTIONS.map(x => `<a href="#/${x.id}" class="${x.id === s.id ? 'on' : ''}">${x.title}</a>`).join('');
+  const more = isMoreRoute();
+  $('#nav').innerHTML = SECTIONS.map(x => `<a href="#/${x.id}" class="${x.id === s.id && !more ? 'on' : ''}">${x.title}</a>`).join('');
+  if (s.id === 'assets' && tab !== 'stocks') ui.lastAsset = tab;
+  renderTabbar(more ? 'more' : s.id === 'tasks' ? 'tasks' : s.id === 'assets' ? (tab === 'stocks' ? 'stocks' : 'assets') : 'more');
+  const tt = $('#top-title');
+  if (tt) tt.innerHTML = more ? '더보기' : s.id === 'assets' && tab === 'stocks' ? '주식 <small>음봉 단타</small>' : esc(s.title);
   const v = $('#view');
-  if (s.id === 'tasks') { v.innerHTML = tokenBanner() + tasksHtml(); tasksMount(); }
+  if (more) v.innerHTML = moreHtml();
+  else if (s.id === 'tasks') { v.innerHTML = tokenBanner() + tasksHtml(); tasksMount(); }
   else if (s.id === 'links') v.innerHTML = linksHtml();
   else if (s.id === 'library') v.innerHTML = libraryHtml();
   else v.innerHTML = sectionHtml(s, tab);
@@ -583,6 +591,29 @@ addEventListener('hub:merged', () => { if (S.data) render(); });
 // PC ↔ 휴대폰 폭이 바뀌면 그 화면 모양으로 다시 그림
 MOBILE.addEventListener('change', () => { if (S.data && !$('#app').hidden) render(); });
 
+// ----- 휴대폰 아래 메뉴 · 더보기 -----
+const isMoreRoute = () => /^#\/?more(\/|$)/.test(location.hash);
+const TAB_ICON = {
+  tasks: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
+  stocks: '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+  assets: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/>',
+  more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
+};
+function renderTabbar(on) {
+  const tabs = [['tasks', '할 일', '#/tasks'], ['stocks', '주식', '#/assets/stocks'], ['assets', '자산', `#/assets/${ui.lastAsset}`], ['more', '더보기', '#/more']];
+  const bar = $('#tabbar');
+  if (!bar) return;
+  bar.innerHTML = tabs.map(([k, l, h]) => `<a href="${h}" data-tab="${k}" class="${k === on ? 'on' : ''}"${k === on ? ' aria-current="page"' : ''}>
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TAB_ICON[k]}</svg><span>${l}</span></a>`).join('');
+}
+function moreHtml() {
+  const secs = SECTIONS.filter(x => !['tasks', 'assets'].includes(x.id));
+  return `<div class="m-more">
+    <section class="card menu-list">${secs.map(x => `<a href="#/${x.id}"><span>${esc(x.title)}${x.id === 'education' ? ' · 시간표' : ''}</span><span class="chev" aria-hidden="true">›</span></a>`).join('')}</section>
+    <h3 class="set-group">설정</h3>
+    <section class="card menu-list"><button type="button" data-act="settings"><span>설정 <small class="muted">자동 잠금 · 백업 · 고급 설정</small></span><span class="chev" aria-hidden="true">›</span></button></section>
+  </div>`;
+}
 // 접는 칸을 열고 닫으면 기억 (다시 그려도 그대로)
 // (사람이 누른 것만: 요약 줄 click은 열리고 닫히기 바로 전에 옴. 코드가 여닫은 것은 기억하지 않음)
 document.addEventListener('click', e => {
@@ -701,11 +732,11 @@ function tableHtml(key) {
     const linked = key === 'stocks' && c.k === 'qty' && r.tradeBase ? ` <span class="link-tag" title="차트 목록의 실제 매매가 수량·평단에 반영돼요">매매 반영</span>${hasEx(r) ? `<small class="ex-split">규칙 ${fmtNum(rulePos(r).qty)}주 · 예외 ${fmtNum(rulePos(r).exQty)}주</small>` : ''}` : '';
     return `<td class="${isNumType(c.type) ? 'num' : ''}">${cell(c.type, v, def.cur?.(r))}${clip}${linked}</td>`;
   }).join('')}</tr>`).join('');
-  if (isMobile() && key === 'stocks') return mobileCardsHtml(key, def, cols, rows, sort, counts);
+  if (isMobile()) return mobileCardsHtml(key, def, cols, rows, sort, counts);
   return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-// 휴대폰 주식 원장: 표 대신 카드 (옆으로 밀 필요 없게). 정렬은 위 고르기 칸으로, 카드를 누르면 수정
+// 휴대폰: 표 대신 카드 (옆으로 밀 필요 없게). 정렬은 위 고르기 칸으로, 카드를 누르면 수정
 function mobileCardsHtml(key, def, cols, rows, sort, counts) {
   const titleCol = cols.find(c => c.k === 'name') || cols[0];
   const opts = cols.flatMap(c => [1, -1].map(dir => `<option value="${esc(c.k)}:${dir}"${sort?.k === c.k && sort.dir === dir ? ' selected' : ''}>${esc(c.l)} ${dir > 0 ? '▲' : '▼'}</option>`)).join('');
@@ -1468,14 +1499,24 @@ async function drawChart() {
     text: e.real ? `${e.ex ? '예외' : '실제'} ${KIND[e.kind]}` : e.kind === 'tp' ? '익절' : e.kind === 'sl' ? '손절' : '',
   })));
   candleTip(box, data, rows, us, candles);
-  // 지금 실제로 갖고 있으면 평단·익절가·손절가 선
-  const rp = rulePos(r);
-  if (rp.exQty > 0 && rp.exAvg > 0) candles.createPriceLine({ price: rp.exAvg, color: col('--muted'), lineStyle: 3, lineWidth: 1, title: '예외 평단' });
+  // 지금 실제로 갖고 있으면 평단·익절가·손절가 선. 국내는 실제 주문 값(호가 단위): 익절 = 평단 × 1.05 이상 가장 작은 호가, 손절 = 평단 × 0.85 이하 가장 큰 호가
+  // 휴대폰: 선 이름을 차트 안에 쓰면 마지막 봉들을 가리므로, 이름은 차트 아래 한 줄(선과 같은 색)에 쓰고 차트에는 선과 오른쪽 가격 칸만
+  const rp = rulePos(r), pl = [];
+  const floorTick = v => { const t = krTick(v); return Math.floor(v / t + 1e-9) * t; };
+  if (rp.exQty > 0 && rp.exAvg > 0) pl.push({ price: rp.exAvg, color: col('--muted'), lineStyle: 3, title: '예외 평단' });
   if (num(rp.qty) > 0 && num(rp.avg) > 0) {
-    const a = num(rp.avg);
-    candles.createPriceLine({ price: a, color: col('--text-2'), lineStyle: 2, lineWidth: 1, title: '평단' });
-    candles.createPriceLine({ price: a * 1.05, color: up, lineStyle: 2, lineWidth: 1, title: '익절' });
-    candles.createPriceLine({ price: a * 0.85, color: down, lineStyle: 2, lineWidth: 1, title: '손절' });
+    const a = num(rp.avg), L = levels(a, us);
+    pl.push({ price: us ? L.tp : ceilTick(a * TP), color: up, lineStyle: 2, title: '익절' },
+      { price: a, color: col('--text-2'), lineStyle: 2, title: '평단' },
+      { price: us ? L.sl : floorTick(L.sl), color: down, lineStyle: 2, title: '손절' });
+  }
+  const narrow = isMobile();
+  pl.sort((x, y) => y.price - x.price);
+  for (const x of pl) candles.createPriceLine({ ...x, lineWidth: 1, title: narrow ? '' : x.title });
+  box.parentElement.querySelector('.chart-lines')?.remove();
+  if (narrow && pl.length) {
+    const fmt = v => (us ? `$${v.toFixed(2)}` : Math.round(v).toLocaleString('ko-KR'));
+    box.insertAdjacentHTML('afterend', `<div class="chart-legend chart-lines small">${pl.map(x => `<span style="color:${x.color}"><i class="lg" style="background:${x.color};height:2px;vertical-align:3px"></i>${x.title} <b>${fmt(x.price)}</b></span>`).join('')}</div>`);
   }
   const last = data.c.at(-1)[0];
   const from = new Date(new Date(last) - 365 * 864e5).toISOString().slice(0, 10);
@@ -3149,16 +3190,8 @@ function openSettings() {
   const repos = store.usage();
   const exp = d.tokenExp === 'none' ? '없음' : d.tokenExp ? `${d.tokenExp} (${daysUntil(d.tokenExp) >= 0 ? `${daysUntil(d.tokenExp)}일 남음` : '만료됨'})` : '모름';
   const modeName = { pattern: '패턴으로 열기', auto: '묻지 않고 열기' }[ui.session?.mode] || '매번 비밀번호로 열기';
-  mform.innerHTML = `
-    <h2>설정</h2>
-    <p class="set-now">이 기기: <b>${modeName}</b> · 토큰 만료 <b>${esc(exp)}</b> · 데이터는 GitHub 비공개 저장소에 안전하게 있어요</p>
-
-    <h3 class="set-group">자주 쓰는 것</h3>
-
-    <section class="set-card">
-      <h4>열 때 무엇을 물을까요?</h4>
-      <p class="muted small">이 기기에서 새로고침하거나 다시 열 때예요. 30일 동안 안 열면 다시 비밀번호를 물어요.</p>
-      <div class="open-modes">
+  const setNow = `    <p class="set-now">이 기기: <b>${modeName}</b> · 토큰 만료 <b>${esc(exp)}</b> · 데이터는 GitHub 비공개 저장소에 안전하게 있어요</p>`;
+  const modesHtml = `      <div class="open-modes">
         <label class="check"><input type="radio" name="openMode" value="password"> <span>매번 비밀번호</span></label>
         <label class="check"><input type="radio" name="openMode" value="pattern"> <span>패턴 <small class="muted">— 5번 틀리면 비밀번호</small></span></label>
         <label class="check"><input type="radio" name="openMode" value="auto"> <span>묻지 않음 <small class="muted">— 나만 쓰는 기기에서만. 🔒을 누르면 꺼져요</small></span></label>
@@ -3167,31 +3200,26 @@ function openSettings() {
         <p class="small" id="pat-set-msg"></p>
         <div id="pat-set-pad" class="pat-wrap"></div>
       </div>
-      <div class="fields">
+`;
+  const lockHtml = `      <div class="fields">
         <label class="field"><span>안 쓰면 자동으로 잠그기 (분) <small class="muted">— 묻지 않음일 땐 잠그지 않아요</small></span><input name="lockMin" type="number" min="1" max="240" value="${prefs.lockMin || 10}"></label>
       </div>
-    </section>
-
-    <section class="set-card">
-      <h4>새 기기(휴대폰·다른 PC) 연결하기</h4>
-      <p class="muted small">새 기기는 <b>이미 연결된 기기에서만</b> 들일 수 있어요 (또는 토큰).</p>
+`;
+  const devHtml = `      <p class="muted small">새 기기는 <b>이미 연결된 기기에서만</b> 들일 수 있어요 (또는 토큰).</p>
       <ul class="muted small steps">
         <li><b>휴대폰:</b> QR 코드 보기 → 휴대폰 카메라로 찍기 → 같은 비밀번호</li>
         <li><b>다른 PC:</b> 연결 링크 복사 → 나에게만 보내기(카톡 나와의 채팅 등) → 새 PC에서 링크 열기 → 같은 비밀번호. 보낸 메시지는 연결 후 지우세요</li>
       </ul>
       <div class="row"><button type="button" class="btn" data-m="qr">QR 코드 보기</button><button type="button" class="btn" data-m="link">연결 링크 복사</button></div>
       <div id="qr-box" class="qr-box" hidden></div>
-    </section>
-
-    <section class="set-card">
+`;
+  const backupHtml = `    <section class="set-card">
       <h4>백업 받아 두기</h4>
       <p class="muted small">GitHub에 이미 저장돼 있지만, 만약을 위해 가끔 내 PC에도 받아 두세요. 받은 파일은 비밀번호로 암호화돼 있어요.</p>
       <div class="row"><button type="button" class="btn" data-m="backup">백업 다운로드</button></div>
     </section>
-
-    <h3 class="set-group">가끔 쓰는 것 <small class="muted">필요할 때만 펼치세요</small></h3>
-
-    <details class="set-item">
+`;
+  const itemsHtml = `    <details class="set-item">
       <summary><b>비밀번호 바꾸기</b><span>비밀번호를 바꾸고 싶을 때</span></summary>
       <p class="muted small">데이터와 복구 코드는 그대로예요. 다른 기기에서는 다음에 열 때 새 비밀번호를 넣으면 돼요.</p>
       <div class="fields">
@@ -3235,13 +3263,15 @@ function openSettings() {
       <div class="row"><button type="button" class="btn" data-m="export">암호화 안 한 파일로 받기</button></div>
     </details>
 
-    <details class="set-item">
+`;
+  const forgetHtml = `    <details class="set-item">
       <summary><b>이 기기 연결 끊기</b><span>이 기기를 더 안 쓰거나, 다른 계정으로 연결할 때</span></summary>
       <p class="muted small">이 기기에서만 연결을 끊어요. <b>GitHub의 데이터는 지워지지 않고</b>, 토큰이나 QR로 다시 연결하면 그대로 돌아와요. 아직 못 올린 변경이 있으면 끊지 않아요.</p>
       <div class="row"><button type="button" class="btn" data-m="forget">이 기기 연결 끊기</button></div>
     </details>
 
-    <details class="set-item">
+`;
+  const infoHtml = `    <details class="set-item">
       <summary><b>연결 정보</b><span>계정과 저장소</span></summary>
       <dl class="kv">
         <dt>계정</dt><dd>${esc(d.owner)}</dd>
@@ -3251,7 +3281,54 @@ function openSettings() {
       </dl>
     </details>
 
+`;
+  // 휴대폰: 자주 쓰는 것(자동 잠금·백업)만 펼쳐 두고, 손대면 안 되는 것은 모두 '고급 설정' 안에 (누르면 한 번 더 물어요)
+  const gs = googleState();
+  const settingsMobileHtml = () => `
+    <h2>설정</h2>
+${setNow}
+
+    <h3 class="set-group">자주 쓰는 것</h3>
+    <section class="set-card">
+${lockHtml}    </section>
+${backupHtml}
+    <details class="set-adv">
+      <summary>고급 설정 · 기기 연결·비밀번호·토큰·Google</summary>
+      <p class="muted small">펼쳐도 바로 바뀌지 않아요. 바꾸는 버튼은 누를 때마다 한 번 더 물어요.</p>
+    <details class="set-item">
+      <summary><b>열 때 무엇을 물을까요?</b><span>지금: ${modeName}</span></summary>
+      <p class="muted small">이 기기에서 새로고침하거나 다시 열 때예요. 30일 동안 안 열면 다시 비밀번호를 물어요.</p>
+${modesHtml}    </details>
+    <details class="set-item">
+      <summary><b>새 기기 연결하기</b><span>휴대폰·다른 PC (QR·연결 링크)</span></summary>
+${devHtml}    </details>
+${itemsHtml}    <details class="set-item">
+      <summary><b>Google 할 일 연결</b><span>클라이언트 ID · 로그아웃</span></summary>
+      <p class="muted small">할 일 화면이 Google에 로그인하는 설정이에요. 지우거나 로그아웃해도 Google 할 일 내용은 그대로예요.</p>
+      <div class="row"><button type="button" class="btn" data-m="gt-cid">${gs.clientId ? '클라이언트 ID 바꾸기·지우기' : '클라이언트 ID 넣기'}</button>${gs.loggedIn ? '<button type="button" class="btn" data-m="gt-logout">Google 로그아웃</button>' : ''}</div>
+    </details>
+${forgetHtml}${infoHtml}    </details>
+
     <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
+  mform.innerHTML = isMobile() ? settingsMobileHtml() : `
+    <h2>설정</h2>
+${setNow}
+
+    <h3 class="set-group">자주 쓰는 것</h3>
+
+    <section class="set-card">
+      <h4>열 때 무엇을 물을까요?</h4>
+      <p class="muted small">이 기기에서 새로고침하거나 다시 열 때예요. 30일 동안 안 열면 다시 비밀번호를 물어요.</p>
+${modesHtml}${lockHtml}    </section>
+
+    <section class="set-card">
+      <h4>새 기기(휴대폰·다른 PC) 연결하기</h4>
+${devHtml}    </section>
+
+${backupHtml}
+    <h3 class="set-group">가끔 쓰는 것 <small class="muted">필요할 때만 펼치세요</small></h3>
+
+${itemsHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
 
   mform.onsubmit = e => e.preventDefault();
   const modeRadios = [...mform.querySelectorAll('[name=openMode]')];
@@ -3263,6 +3340,7 @@ function openSettings() {
     box.hidden = true;
     try {
       if (r.value === 'password') { await store.forgetSession(); toast('이제 열 때마다 비밀번호를 물어요.'); }
+      if (r.value === 'auto' && !askM('이 기기에서는 비밀번호 없이 열리게 할까요?\n나만 쓰는 기기에서만 켜세요. 🔒을 누르면 다시 꺼져요.')) { showMode(); return; }
       if (r.value === 'auto') { await store.rememberDevice('auto'); toast('이 기기에서는 비밀번호 없이 열려요. 자리를 비울 땐 🔒을 누르세요.'); }
       if (r.value === 'pattern') {
         // 두 번 같게 그려야 저장. 그 전까지 열기 방식은 그대로
@@ -3301,12 +3379,16 @@ function openSettings() {
     };
     switch (btn.dataset.m) {
       case 'close': modal.close(); break;
+      case 'gt-cid': modal.close(); editGoogleCid(); if (!/^#\/?tasks/.test(location.hash)) location.hash = '#/tasks'; else render(); break;
+      case 'gt-logout': if (logoutGoogle()) modal.close(); break;
       case 'exp': guard(async () => {
+        if (!askM('토큰 만료일 표시를 바꿀까요?\n(토큰은 그대로예요. GitHub 토큰 목록에 보이는 날짜와 맞추세요)')) return;
         await store.setTokenExp(expValue(el.expEdit));
         toast('토큰 만료일을 저장했어요.');
         openSettings();
       }); break;
       case 'qr': guard(async () => {
+        if (!askM('새 기기를 연결할 QR 코드를 보여줄까요?\n이 QR로 누구나 이 계정에 연결할 수 있어요 (비밀번호는 따로 필요). 다른 사람에게 보여주지 마세요.')) return;
         const qrcode = await loadQr();
         const qr = qrcode(0, 'M');
         qr.addData(store.connectLink());
@@ -3316,6 +3398,7 @@ function openSettings() {
         box.hidden = false;
       }); break;
       case 'link': guard(async () => {
+        if (!askM('새 기기 연결 링크를 복사할까요?\n링크가 남에게 가면 위험해요. 나에게만 보내고, 연결한 뒤 메시지를 지우세요.')) return;
         await navigator.clipboard.writeText(store.connectLink());
         toast('연결 링크를 복사했어요. 본인에게만 보내세요.');
       }); break;
@@ -3337,6 +3420,7 @@ function openSettings() {
       case 'token': guard(async () => {
         const t = el.token.value.trim();
         if (!t) throw new Error('새 토큰을 넣어주세요.');
+        if (!askM('GitHub 토큰을 바꿀까요?\n데이터·비밀번호·복구 코드는 그대로예요. 바꾼 뒤 휴대폰은 QR로 다시 연결하세요.')) return;
         await store.replaceToken(t, expValue(el.tokenExp));
         el.token.value = '';
         toast('토큰을 바꿨어요. 휴대폰은 QR로 다시 연결하세요.');
