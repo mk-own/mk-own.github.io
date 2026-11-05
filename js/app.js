@@ -742,7 +742,7 @@ function swingResultHtml(r) {
 }
 
 // ----- 국내 LOC 미리 보기 (휴대폰 지금 할 일 카드): 시가만 알면 주문 가격·수량이 정해짐 -----
-// KRX 호가 단위 · LOC 매수 = 시가 − 1호가 · 익절 LOC = 평단 × 1.05를 호가 단위로 올림 · 손절 = 15:20 예상체결가 ≤ 평단 × 0.85면 시장가
+// KRX 호가 단위 · 보통(지정가) LOC 매수 = 시가 − 1호가 · 보통 LOC 익절 = 평단 × 1.05를 호가 단위로 올림 · 손절 = 15:20 예상체결가 ≤ 평단 × 0.85면 시장가 매도
 const krTick = v => (v < 2000 ? 1 : v < 5000 ? 5 : v < 20000 ? 10 : v < 50000 ? 50 : v < 200000 ? 100 : v < 500000 ? 500 : 1000);
 // 값 v 이상인 가장 작은 호가 (익절 LOC)
 const ceilTick = v => { const t = krTick(v); return Math.ceil(v / t - 1e-9) * t; };
@@ -756,6 +756,13 @@ function krLocQty(p, price, k) {
   const cap = Math.floor(cash / price + 1e-9);
   return Math.min(Math.max(1, want), cap);
 }
+// 국내 주문 방식 (미래에셋 실제 주문 확인 전까지 둘 다 준비):
+//   'loc'     = 보통(지정가) LOC를 15:15까지 미리 (미래에셋 보통 LOC는 15:18쯤 그때 가격으로 체결) · 손절은 15:20 시장가 매도
+//   'auction' = 15:20~15:30 동시호가에 지정가 (15:30 종가 하나로 체결 = LOC와 같음) · 15:20 전에 넣으면 바로 체결되므로 주의
+const KR_ORDER = 'loc';
+const KRO = KR_ORDER === 'auction'
+  ? { time: '15:20~15:30', slTime: '15:20~15:30', buy: '지정가 매수', tp: '지정가 매도', sl: '시장가 매도', row: '동시호가 지정가', rowSl: '동시호가 시장가' }
+  : { time: '15:15까지', slTime: '15:20', buy: '보통 LOC 매수', tp: '보통 LOC 매도', sl: '시장가 매도', row: '15:20 LOC', rowSl: '15:20 시장가' };
 // 오늘 시가만으로 정해지는 국내 LOC 주문: { buyPx: 시가 − 1호가, q: 살 주식 수(0이면 안 삼), k: 살 칸, why: 안 사는 까닭, tpPx: 익절 LOC 값(평단 × 1.05 호가 올림), sl: 손절가 }
 function krLoc(p) {
   const open = num(p.open), units = Math.round(num(p.units)), qty = num(p.qty), avg = num(p.avg);
@@ -785,15 +792,15 @@ function orderLines(r) {
   if (!num(p.account)) return { p, d, units, lines, why: '투자금 없음' };
   if (!num(p.open)) return { p, d, units, lines, why: '시가 기다리는 중' };
   const L = krLoc(p), close = num(p.close);
-  if (close && L.held && close <= L.sl) return { p, d, units, lines: [{ kind: 'sl', time: '15:20', how: '시장가 매도', qty: L.qty, delta: -units * 20 }], why: '' };
-  if (L.held) lines.push({ kind: 'tp', time: '15:20까지', how: 'LOC 매도', qty: L.qty, price: fmtWon(L.tpPx), delta: -units * 20 });
+  if (close && L.held && close <= L.sl) return { p, d, units, lines: [{ kind: 'sl', time: KRO.slTime, how: KRO.sl, qty: L.qty, delta: -units * 20 }], why: '' };
+  if (L.held) lines.push({ kind: 'tp', time: KRO.time, how: KRO.tp, qty: L.qty, price: fmtWon(L.tpPx), delta: -units * 20 });
   let why = L.why;
   if (close) {
     // 종가(예상체결가)를 알면 그날 규칙대로 (사는 양은 decide 그대로, 값은 LOC 값)
     const ob = d.orders.find(o => o.kind === 'buy');
-    if (ob && !(L.held && L.buyPx >= L.tpPx)) lines.push({ kind: 'buy', time: '15:20까지', how: 'LOC 매수', qty: ob.qty, price: fmtWon(L.buyPx), delta: ob.units * 20 });
+    if (ob && !(L.held && L.buyPx >= L.tpPx)) lines.push({ kind: 'buy', time: KRO.time, how: KRO.buy, qty: ob.qty, price: fmtWon(L.buyPx), delta: ob.units * 20 });
     else if (!ob && !d.orders.length) why = d.text;
-  } else if (L.q) lines.push({ kind: 'buy', time: '15:20까지', how: 'LOC 매수', qty: L.q, price: fmtWon(L.buyPx), delta: L.k * 20 });
+  } else if (L.q) lines.push({ kind: 'buy', time: KRO.time, how: KRO.buy, qty: L.q, price: fmtWon(L.buyPx), delta: L.k * 20 });
   const rank = { buy: 0, tp: 1, sl: 2 };
   lines.sort((x, y) => rank[x.kind] - rank[y.kind]); // 매수 줄 먼저
   return { p, d, units, lines, why: lines.length ? '' : shortWhy(why) };
@@ -833,9 +840,13 @@ function whyInfoHtml(r) {
   const o = orderLines(r), p = o.p, cur = p.us ? '$' : '', rp = rulePos(r), out = [krText(p, o.d)];
   if (!p.us && num(p.open)) {
     const L = krLoc(p);
-    out.push(`LOC 매수 = 시가 ${fmtWon(L.open)} − 1호가 · 종가가 이 가격 이하일 때만 체결`);
+    out.push(KR_ORDER === 'auction'
+      ? `지정가 매수 = 시가 ${fmtWon(L.open)} − 1호가 (호가 단위로 내림) · 15:20~15:30 동시호가에 넣으면 15:30 종가로 체결 (종가가 이 가격 이하일 때만)`
+      : `보통(지정가) LOC 매수 = 시가 ${fmtWon(L.open)} − 1호가 (호가 단위로 내림) · 15:18쯤 그때 가격이 이 값 이하면 체결`);
     if (num(p.close)) out.push(`예상체결가 ${fmtWon(p.close)}`);
-    if (L.held) out.push(`15:20에 예상체결가가 ${fmtWon(L.sl)}(평단 × 0.85) 이하면 동시호가 시장가 매도 · LOC 매수는 취소`);
+    if (L.held) out.push(KR_ORDER === 'auction'
+      ? `15:20~15:30에 예상체결가가 ${fmtWon(L.sl)}(평단 × 0.85) 이하면 시장가 매도 · 매수는 넣지 않음`
+      : `15:20에 예상체결가가 ${fmtWon(L.sl)}(평단 × 0.85) 이하면 시장가 매도 · 손절이 올 것 같으면 LOC 매수는 15:15 전에 취소`);
   }
   out.push(`${num(rp.qty) ? `${fmtNum(rp.qty)}주 평단 ${fmtMoney(rp.avg, cur)} · ` : ''}투자금 ${fmtMoney(num(r.account), cur)}`);
   return out.map(x => `<p>${esc(x)}</p>`).join('');
@@ -1070,6 +1081,51 @@ const MA_UP_HINT = "200일선(금색 선)이 20거래일 전(약 한 달 전)의
 // 규칙 보기 (글자만, 규칙 계산은 swing.js 그대로). 국내는 KRX 정규장 가격 기준
 const ruleCard = (kind, title, rows, note = '') => `<section class="rule-card ${kind}"><h4>${title}</h4>
     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>${note ? `<p class="rule-note">${note}</p>` : ''}</section>`;
+const KR_RULES_LOC = `  <h3>국내 · SK하이닉스 (KRX)</h3>
+  <div class="rule-cards">
+    ${ruleCard('buy', '매수', [
+      ['넣는 시간', '<b>09:10–15:15</b>'],
+      ['방법', '<b>보통(지정가) LOC 매수</b> · 거래소 <b>KRX</b> (NXT·SOR 아님)'],
+      ['가격', '오늘 KRX 시가 <b>− 1호가</b>, 호가 단위로 내림 (50만 원 이상은 1호가 = <b>1,000원</b>) · 예: 시가 <b>1,320,000</b> → <b>1,319,000</b>'],
+      ['수량', '오늘 할 일에 나온 주식 수'],
+    ], '미래에셋 보통 LOC는 <b>15:18쯤</b> 그때 가격이 이 값 이하면 체결돼요 · 15:30 종가와 조금(보통 0.1%쯤) 다를 수 있어요.')}
+    ${ruleCard('tp', '익절', [
+      ['넣는 시간', '갖고 있는 동안 매일 <b>09:10–15:15</b>'],
+      ['방법', '<b>보통(지정가) LOC 매도</b> · <b>전량</b>'],
+      ['가격', '<b>평단 × 1.05</b>, 호가 단위로 올림'],
+    ], '시가 − 1호가가 익절가보다 낮지 않으면 그날 매수는 넣지 않아요 (매수와 익절이 같이 체결되지 않게).')}
+    ${ruleCard('sl', '손절', [
+      ['넣는 시간', '<b>15:20쯤</b> (동시호가 <b>15:20–15:30</b>)'],
+      ['조건', '예상체결가 ≤ <b>평단 × 0.85</b>'],
+      ['방법', '<b>시장가 매도</b> (동시호가) · <b>전량</b>'],
+    ], '손절이 올 것 같으면 넣어 둔 LOC 매수는 <b>15:15 전에</b> 취소하세요 (15:18쯤 체결되므로). LOC로는 "이 값 이하면 팔기"를 걸 수 없고, 감시주문은 장중에 터져서 종가와 달라요.')}
+  </div>
+  <p class="muted small rule-note">시장가 LOC는 무조건 종가에 체결돼서 매수에 쓰면 양봉 날도 사져요 · 최유리 LOC는 가격을 정할 수 없어서 안 써요</p>
+  <p class="rule-alt"><b>다른 방법</b> — 15:20쯤 예상체결가를 보고 동시호가(15:20–15:30)에 지정가로 넣으면 15:30 종가로 체결돼요.</p>
+
+`;
+const KR_RULES_AUCTION = `  <h3>국내 · SK하이닉스 (KRX)</h3>
+  <p class="rule-key">국내는 <b>15:20~15:30 동시호가</b>에 <b>지정가</b>로 넣어요. 이때 넣은 지정가는 <b>15:30 종가</b> 하나로 체결돼서 LOC와 같아요. <b>⚠️ 15:20 전에 넣으면 바로 체결돼요.</b></p>
+  <div class="rule-cards">
+    ${ruleCard('buy', '매수', [
+      ['넣는 시간', '<b>15:20~15:30</b> (동시호가)'],
+      ['방법', '<b>지정가 매수</b> · 거래소 <b>KRX</b> (NXT·SOR 아님)'],
+      ['가격', '오늘 KRX 시가 <b>− 1호가</b>, 호가 단위로 내림 (50만 원 이상은 1호가 = <b>1,000원</b>) · 예: 시가 <b>1,320,000</b> → <b>1,319,000</b>'],
+      ['수량', '오늘 할 일에 나온 주식 수'],
+    ], '체결은 <b>15:30 종가</b>로 되고, 종가 ≤ 이 값일 때만 체결돼요.')}
+    ${ruleCard('tp', '익절', [
+      ['넣는 시간', '갖고 있는 동안 매일 <b>15:20~15:30</b>'],
+      ['방법', '<b>지정가 매도</b> · <b>전량</b>'],
+      ['가격', '<b>평단 × 1.05</b>, 호가 단위로 올림'],
+    ], '시가 − 1호가가 익절가보다 낮지 않으면 그날 매수는 넣지 않아요 (매수와 익절이 같이 체결되지 않게).')}
+    ${ruleCard('sl', '손절', [
+      ['넣는 시간', '<b>15:20~15:30</b> (동시호가)'],
+      ['조건', '예상체결가 ≤ <b>평단 × 0.85</b>'],
+      ['방법', '매수는 넣지 않고 <b>시장가 매도</b> · <b>전량</b>'],
+    ], '감시주문은 장중에 터져서 종가와 달라요.')}
+  </div>
+
+`;
 const SWING_RULES = `<div class="rules">
   <p class="rule-key"><b>기준: KRX 정규장 가격</b> — 09:00 KRX 시가 · 15:30 KRX 종가로 판단해요. NXT 가격(08:00–08:50, 15:30–20:00)은 쓰지 않아요. 증권 앱에서 차트를 볼 때도 <b>KRX 기준</b>으로 보세요.</p>
 
@@ -1095,27 +1151,7 @@ const SWING_RULES = `<div class="rules">
     <p><b>다 팔면 다시 정해요 (복리)</b> — 익절·손절로 전부 팔면 다음 투자금 = 남은 현금 + 판 돈 (수수료·세금 뺀 뒤), 즉 <b>투자금 ± 실현 손익</b>. 갖고 있는 동안엔 투자금이 안 바뀌어요.</p>
   </div>
 
-  <h3>국내 · SK하이닉스 (KRX)</h3>
-  <div class="rule-cards">
-    ${ruleCard('buy', '매수', [
-      ['넣는 시간', '<b>09:10–15:00</b>'],
-      ['방법', '<b>LOC 매수</b> · 거래소 <b>KRX</b> (NXT·SOR 아님)'],
-      ['가격', '오늘 KRX 시가 <b>− 1호가</b> (50만 원 이상은 1호가 = <b>1,000원</b>) · 예: 시가 <b>1,458,000</b> → <b>1,457,000</b>'],
-      ['수량', '오늘 할 일에 나온 주식 수'],
-    ], '체결은 내가 넣은 값이 아니라 <b>15:30 종가</b>로 되고, 종가 &lt; 시가일 때만 체결돼요.')}
-    ${ruleCard('tp', '익절', [
-      ['넣는 시간', '갖고 있는 동안 매일 <b>09:10–15:00</b>'],
-      ['방법', '<b>LOC 매도</b> · <b>전량</b>'],
-      ['가격', '<b>평단 × 1.05</b>, 1호가 단위로 올림'],
-    ], '시가 − 1호가가 익절가보다 낮지 않으면 그날 매수는 넣지 않아요 (매수와 익절이 같이 체결되지 않게).')}
-    ${ruleCard('sl', '손절', [
-      ['넣는 시간', '<b>15:20쯤</b> (동시호가 <b>15:20–15:30</b>)'],
-      ['조건', '예상체결가 ≤ <b>평단 × 0.85</b>'],
-      ['방법', '넣어 둔 LOC 매수를 취소하고 <b>동시호가 시장가 매도</b> · <b>전량</b>'],
-    ], 'LOC로는 "이 값 이하면 팔기"를 걸 수 없고, 감시주문은 장중에 터져서 종가와 달라요.')}
-  </div>
-  <p class="rule-alt"><b>다른 방법</b> — LOC는 미리(09:10–15:00) 넣어도 되고, 15:20쯤 예상체결가를 보고 동시호가(15:20–15:30)로 넣어도 결과는 같아요.</p>
-
+${KR_ORDER === 'auction' ? KR_RULES_AUCTION : KR_RULES_LOC}
   <h3>미국 · QQQ · SOXL</h3>
   <p class="rule-key">아침에 <b>어젯밤 봉</b>(미국 정규장 시가·종가)으로 판단하고, 한국 시간 <b>20:00</b>에 주문해요 → 다음날 새벽 장 마감 <b>종가</b>로 체결.</p>
   <div class="rule-cards">
@@ -1185,14 +1221,16 @@ function swingItemHtml(r) {
 // 위: 종목마다 "지금 할 일" 큰 카드 (20:00 전엔 국내 먼저, 20:00부터 미국 먼저) → 차트(칩은 차트 종목만 고름) → 고급
 const SLOT = { kr: { at: 15 * 60 + 20, hm: '15:20', name: '국내' }, us: { at: 20 * 60, hm: '20:00', name: '미국' } };
 const kstMin = () => { const z = zoned('Asia/Seoul'); return { m: z.h * 60 + Number(z.hm.slice(3)), wd: z.wd }; };
-// 카드 띠 오른쪽: 날짜·마감 ("11/5 (목) 15:20까지"). 남은 시간은 안 셈 · KST 날짜
+// 카드 띠 오른쪽: 날짜·마감 ("11/5 (목) 15:15까지 주문"). 남은 시간은 안 셈 · KST 날짜
 const dayLabel = (date, wd) => `${md(date)} (${'일월화수목금토'[wd]})`;
 const prevKst = z => { const d = new Date(z.date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return { date: d.toISOString().slice(0, 10), wd: (z.wd + 6) % 7 }; };
 function slotTime(k) {
   const z = zoned('Asia/Seoul'), m = z.h * 60 + Number(z.hm.slice(3)), weekend = z.wd === 0 || z.wd === 6;
   if (k === 'kr') {
     if (weekend) return `${dayLabel(z.date, z.wd)} 장 쉼`;
-    return `${dayLabel(z.date, z.wd)} ${m < 15 * 60 + 20 ? '15:20까지' : m < 15 * 60 + 30 ? '15:30 체결' : '장 마감'}`;
+    if (KR_ORDER === 'auction') return `${dayLabel(z.date, z.wd)} ${m < 15 * 60 + 30 ? '15:20~15:30 주문' : '장 마감'}`;
+    // 미래에셋 보통 LOC는 15:18쯤 체결 → 15:15까지 넣기 (여유) · 15:18–15:30은 체결 확인
+    return `${dayLabel(z.date, z.wd)} ${m < 15 * 60 + 18 ? '15:15까지 주문' : m < 15 * 60 + 30 ? '체결 확인' : '장 마감'}`;
   }
   // 미국: 한국 20:00부터 미국 장이 끝날 때(뉴욕 16:00)까지는 "오늘 밤 주문" (자정을 넘기면 시작한 날 날짜로)
   const ny = zoned('America/New_York'), nyM = ny.h * 60 + Number(ny.hm.slice(3));
@@ -2273,7 +2311,7 @@ function simResultHtml(r, res, data, amount, rows) {
   if (isMobile()) return simResultMobileHtml(r, res, data, amount, rows);
   const cur = isUS(r) ? '$' : '';
   // 그날 언제·어떻게 주문하는지 (swing.js decide와 같은 방식)
-  const how = e => (!isUS(r) ? (e.kind === 'sl' ? '15:20 시장가' : '15:20 LOC') : e.kind === 'sl' ? '20:00 MOC 매도' : `20:00 LOC ${e.side === 'buy' ? '매수' : '매도'}`);
+  const how = e => (!isUS(r) ? (e.kind === 'sl' ? KRO.rowSl : KRO.row) : e.kind === 'sl' ? '20:00 MOC 매도' : `20:00 LOC ${e.side === 'buy' ? '매수' : '매도'}`);
   const sm = res.summary;
   // 표는 늘 보임: 맨 위 오늘 줄 (가상 데이터 표시와 상관없음, 합계에 안 들어감) + 지난 기록
   const table = body => `<div class="table-wrap"><table class="sim-table">
@@ -2304,7 +2342,7 @@ function simResultHtml(r, res, data, amount, rows) {
 // 휴대폰: 표 대신 카드. 오늘 줄은 없음 (맨 위 "지금 할 일" 카드가 같은 일을 함)
 function simResultMobileHtml(r, res, data, amount, rows) {
   const cur = isUS(r) ? '$' : '';
-  const how = e => (!isUS(r) ? (e.kind === 'sl' ? '15:20 시장가' : '15:20 LOC') : e.kind === 'sl' ? '20:00 MOC 매도' : `20:00 LOC ${e.side === 'buy' ? '매수' : '매도'}`);
+  const how = e => (!isUS(r) ? (e.kind === 'sl' ? KRO.rowSl : KRO.row) : e.kind === 'sl' ? '20:00 MOC 매도' : `20:00 LOC ${e.side === 'buy' ? '매수' : '매도'}`);
   const sm = res.summary;
   if (!sm) return '<p class="muted small">이 기간에는 자료가 없어요.</p>';
   const pd = periodOf(rows.filter(e => !e.pre), res, data, num(amount));
@@ -2340,7 +2378,7 @@ const TODAY_KIND = { ...KIND, none: '쉼', wait: '대기' };
 function todayRowHtml(r) {
   const us = isUS(r), o = orderLines(r), t = ymd(), ready = num(o.p.account) && num(o.p.open) && (us ? num(o.p.close) : true);
   const kinds = o.lines.length ? [...new Set(o.lines.map(x => x.kind))] : [ready ? 'none' : 'wait'];
-  const how = !o.lines.length ? '주문 없음' : us ? `20:00 ${o.d.order}` : o.lines[0].kind === 'sl' ? '15:20 시장가' : '15:20 LOC';
+  const how = !o.lines.length ? '주문 없음' : us ? `20:00 ${o.d.order}` : o.lines[0].kind === 'sl' ? KRO.rowSl : KRO.row;
   const first = o.lines.find(x => x.kind === 'buy') || o.lines[0];
   const attrs = `data-act="trade" data-id="${r.id}" data-t="${t}" title="눌러서 오늘 실제 매매 넣기"`;
   return `<tr class="today" ${attrs} tabindex="0">
