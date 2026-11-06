@@ -979,3 +979,20 @@ html, body { overscroll-behavior-y: contain; }
 /* 링크 수정 창: 아이콘 줄 */
 .icon-row .icon-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .icon-row small { display: block; margin-top: 4px; }
+
+/* 설정 › 중복 확인 */
+.dup-group { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 8px 0; }
+.dup-group h5 { margin: 0 0 6px; font-size: 13px; }
+.dup-rec { display: flex; gap: 8px; align-items: flex-start; padding: 6px 4px; border-top: 1px dashed var(--line); cursor: pointer; }
+.dup-rec:first-of-type { border-top: 0; }
+.dup-rec input { margin-top: 3px; flex: none; }
+.dup-rec > span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.dup-rec small { font-size: 12px; }
+.dup-rec mark, .dup-group + p mark, #dup-box mark { background: #fff3b0; color: inherit; border-radius: 3px; padding: 0 2px; }
+.dup-tag { font-weight: 600; color: var(--text-2); }
+.dup-tag.keep { color: var(--accent); }
+.dup-hint { color: var(--muted); }
+.dup-trash ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+.dup-none { margin: 10px 0 0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #dup-box mark { background: #5a4a00; } }
+:root[data-theme="dark"] #dup-box mark { background: #5a4a00; }

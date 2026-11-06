@@ -3342,6 +3342,147 @@ async function restoreFrom(file) {
   }
 }
 
+// ---------- 중복 확인 ----------
+// 77a2466(11/4)~9e5152d: 주식이 아닌 항목을 고쳐 저장하면 고친 내용으로 사본이 하나 더 생기던 버그의 뒷정리.
+// 찾기만 하고 아무것도 미리 체크하지 않는다. 사용자가 체크 → 개수를 한 번 더 묻고 → 지운 항목은 sys.trash에 넣어 되돌릴 수 있게.
+// 주식(stocks)·실제 매매(sys.trades)·첨부 파일(files)은 건드리지 않는다. 첨부 파일 자체는 지우지 않음 (되돌리면 다시 붙음)
+const DUP_SKIP = new Set(['stocks', 'files']);
+const BUG_FROM = Date.parse('2026-11-04T00:00:00+09:00');
+const idTime = id => { const t = parseInt(String(id || '').slice(0, 8), 36); return t > 1.5e12 && t < Date.now() + 864e5 ? t : 0; };
+const fmtWhen = t => { if (!t) return ''; const d = new Date(t); return `${ymd(d).slice(5).replace('-', '/')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+// 링크 주소 비교: 앞의 http(s)·www·끝의 / 만 무시 (경로·검색어의 대소문자는 그대로 — 유튜브 주소 등)
+const normUrl = u => { try { const x = new URL(String(u).trim()); return x.hostname.toLowerCase().replace(/^www\./, '') + x.pathname.replace(/\/+$/, '') + x.search + x.hash; } catch { return String(u || '').trim(); } };
+const dupVal = (f, r) => { const v = r[f.k]; return Array.isArray(v) ? v.join(',') : v === true ? '예' : v === false || v == null ? '' : String(v).trim(); };
+
+function findDups() {
+  const groups = [];
+  for (const [col, def] of Object.entries(COLLECTIONS)) {
+    if (DUP_SKIP.has(col) || !def.fields?.length) continue;
+    const list = items(col) || [];
+    if (list.length < 2) continue;
+    const up = new Map(list.map(r => [r, r]));
+    const root = r => { while (up.get(r) !== r) r = up.get(r); return r; };
+    const join = (a, b) => { const x = root(a), y = root(b); if (x !== y) up.set(x, y); };
+    const byKey = (key, only) => {
+      const m = new Map();
+      for (const r of list) { const k = key(r); if (!k) continue; if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+      for (const g of m.values()) if (g.length > 1 && (!only || only(g))) g.slice(1).forEach(r => join(r, g[0]));
+    };
+    // 1) 보이는 칸이 모두 같음
+    byKey(r => JSON.stringify(def.fields.map(f => dupVal(f, r))));
+    // 2) 고친 뒤 조금 다른 것: 링크는 같은 주소, 나머지는 이름(첫 필수 칸)이 같고 버그 기간(11/4~)에 만든 것이 섞여 있을 때
+    if (col === 'links') byKey(r => (r.url ? normUrl(r.url) : ''));
+    else {
+      const tf = def.fields.find(f => f.req) || def.fields[0];
+      byKey(r => dupVal(tf, r).toLowerCase(), g => g.some(r => idTime(r.id) >= BUG_FROM));
+    }
+    const m = new Map();
+    for (const r of list) { const k = root(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+    for (const recs of m.values()) {
+      if (recs.length < 2) continue;
+      recs.sort((a, b) => idTime(a.id) - idTime(b.id));
+      const att = r => filesOf(col, r.id).length;
+      const newest = recs.reduce((a, b) => (idTime(b.id) >= idTime(a.id) ? b : a));
+      // 남길 것 추천: 첨부가 있는 것 (첨부는 처음 항목에 붙어 있음), 없으면 가장 최근 것
+      const keep = recs.filter(att).sort((a, b) => att(b) - att(a))[0] || newest;
+      const diff = new Set(def.fields.filter(f => new Set(recs.map(r => dupVal(f, r))).size > 1).map(f => f.k));
+      groups.push({ col, def, recs, newest, keep, diff });
+    }
+  }
+  return groups;
+}
+
+function dupRecHtml(g, r) {
+  const t = idTime(r.id), n = filesOf(g.col, r.id).length;
+  const title = g.def.fields.find(f => f.req) || g.def.fields[0];
+  const parts = g.def.fields.filter(f => f !== title && dupVal(f, r)).map(f => {
+    const v = dupVal(f, r);
+    const s = `${esc(f.l)}: ${esc(v.length > 60 ? v.slice(0, 60) + '…' : v)}`;
+    return g.diff.has(f.k) ? `<mark>${s}</mark>` : s;
+  });
+  const tags = [
+    t ? `만든 때 ${fmtWhen(t)}` : '',
+    r === g.newest ? '<b class="dup-tag">최신</b>' : '',
+    n ? `<b class="dup-tag">첨부 ${n}개</b>` : '',
+    r === g.keep ? '<b class="dup-tag keep">남길 것 추천</b>' : '<span class="dup-hint">사본일 수 있음</span>',
+  ].filter(Boolean).join(' · ');
+  return `<label class="dup-rec${r === g.keep ? ' keep' : ''}"><input type="checkbox" data-dup="${esc(g.col)}|${esc(r.id)}">
+      <span><b class="${g.diff.has(title.k) ? 'dup-diff' : ''}">${esc(dupVal(title, r) || '(이름 없음)')}</b>
+      ${parts.length ? `<small>${parts.join(' · ')}</small>` : ''}
+      <small class="muted">${tags}</small></span></label>`;
+}
+
+function dupResultHtml() {
+  const groups = findDups();
+  if (!groups.length) return '<p class="dup-none"><b>중복 없음</b> <span class="muted small">— 같은 내용으로 보이는 항목이 없어요.</span></p>';
+  const total = groups.reduce((s, g) => s + g.recs.length, 0);
+  return `<p class="small">같은 내용으로 보이는 묶음 <b>${groups.length}개</b> (항목 ${total}개). <b>지울 사본에만 체크</b>하세요 — 미리 체크된 것은 없어요. 다른 칸은 <mark>노란색</mark>.</p>
+    ${groups.map(g => `<div class="dup-group"><h5>${esc(g.def.title)} <span class="muted">${g.recs.length}개</span></h5>${g.recs.map(r => dupRecHtml(g, r)).join('')}</div>`).join('')}
+    <div class="row"><button type="button" class="btn danger" data-m="dup-del" disabled>선택한 사본 지우기</button></div>`;
+}
+
+const trashList = () => (Array.isArray(S.data.sys.trash) ? S.data.sys.trash : []);
+function dupTrashHtml() {
+  const t = trashList();
+  if (!t.length) return '';
+  return `<div class="dup-trash sep"><p class="small">지운 사본 (되돌릴 수 있어요)</p><ul class="small">${t.slice().reverse().map(b => `<li>${esc(fmtWhen(Date.parse(b.at)))} · ${b.items.length}개 (${esc([...new Set(b.items.map(x => COLLECTIONS[x.col]?.title || x.col))].join('·'))})
+      <button type="button" class="btn small" data-m="dup-undo" data-at="${esc(b.at)}">되돌리기</button></li>`).join('')}</ul></div>`;
+}
+
+function dupRefresh(scan) {
+  const box = $('#dup-box');
+  if (!box) return;
+  if (scan) box.dataset.scanned = '1';
+  box.innerHTML = (box.dataset.scanned ? dupResultHtml() : '') + dupTrashHtml();
+}
+
+const dupPicked = () => [...mform.querySelectorAll('[data-dup]:checked')].map(x => { const i = x.dataset.dup.indexOf('|'); return { col: x.dataset.dup.slice(0, i), id: x.dataset.dup.slice(i + 1) }; });
+
+async function dupDelete() {
+  const pick = dupPicked().filter(p => !DUP_SKIP.has(p.col) && COLLECTIONS[p.col]);
+  if (!pick.length) return;
+  if (!confirm(`선택한 사본 ${pick.length}개를 지울까요?\n지운 것은 설정 › 중복 확인의 "되돌리기"로 다시 살릴 수 있어요. 첨부 파일은 지우지 않아요.`)) return;
+  const batch = { at: new Date().toISOString(), items: [] };
+  const byCol = new Map();
+  for (const p of pick) {
+    const rec = items(p.col).find(r => r.id === p.id);
+    if (!rec) continue;
+    batch.items.push({ col: p.col, rec: JSON.parse(JSON.stringify(rec)) });
+    if (!byCol.has(p.col)) byCol.set(p.col, []);
+    byCol.get(p.col).push(rec);
+  }
+  if (!batch.items.length) return;
+  // 되돌리기 자료를 먼저 저장한 뒤 지운다
+  S.data.sys.trash = [...trashList(), batch].slice(-20);
+  await store.changedSys();
+  for (const [col, recs] of byCol) {
+    S.data.items[col] = items(col).filter(r => !recs.includes(r));
+    await store.changed(col, recs);
+  }
+  toast(`사본 ${batch.items.length}개를 지웠어요. 되돌리려면 "되돌리기"를 누르세요.`);
+  dupRefresh();
+}
+
+async function dupUndo(at) {
+  const b = trashList().find(x => x.at === at);
+  if (!b) return;
+  if (!askM(`${b.items.length}개를 되돌릴까요?`)) return;
+  const byCol = new Map();
+  for (const { col, rec } of b.items) {
+    if (!COLLECTIONS[col] || DUP_SKIP.has(col)) continue;
+    if ((items(col) || []).some(r => r.id === rec.id)) continue; // 이미 있으면 그대로
+    S.data.items[col] ||= [];
+    S.data.items[col].push(rec);
+    if (!byCol.has(col)) byCol.set(col, []);
+    byCol.get(col).push(rec);
+  }
+  for (const [col, recs] of byCol) await store.changed(col, recs);
+  S.data.sys.trash = trashList().filter(x => x !== b);
+  await store.changedSys();
+  toast(`${b.items.length}개를 되돌렸어요.`);
+  dupRefresh();
+}
+
 function openSettings() {
   const d = S.device;
   const prefs = lsGet(LS.prefs) || {};
@@ -3430,6 +3571,14 @@ function openSettings() {
     </details>
 
 `;
+  const dupHtml = `    <details class="set-item" id="dup-item">
+      <summary><b>중복 확인</b><span>같은 항목이 두 개씩 생겼을 때</span></summary>
+      <p class="muted small">11/4~11/6 사이에 링크·건강 등(주식 말고)을 고쳐 저장하면 사본이 하나 더 생기는 문제가 있었어요. 찾기만 하고 저절로 지우지 않아요. 주식·매매 기록은 보지 않아요.</p>
+      <div class="row"><button type="button" class="btn" data-m="dup-scan">중복 찾기</button></div>
+      <div id="dup-box">${dupTrashHtml()}</div>
+    </details>
+
+`;
   const forgetHtml = `    <details class="set-item">
       <summary><b>이 기기 연결 끊기</b><span>이 기기를 더 안 쓰거나, 다른 계정으로 연결할 때</span></summary>
       <p class="muted small">이 기기에서만 연결을 끊어요. <b>GitHub의 데이터는 지워지지 않고</b>, 토큰이나 QR로 다시 연결하면 그대로 돌아와요. 아직 못 올린 변경이 있으면 끊지 않아요.</p>
@@ -3473,7 +3622,7 @@ ${itemsHtml}    <details class="set-item">
       <p class="muted small">할 일 화면이 Google에 로그인하는 설정이에요. 지우거나 로그아웃해도 Google 할 일 내용은 그대로예요.</p>
       <div class="row"><button type="button" class="btn" data-m="gt-cid">${gs.clientId ? '클라이언트 ID 바꾸기·지우기' : '클라이언트 ID 넣기'}</button>${gs.loggedIn ? '<button type="button" class="btn" data-m="gt-logout">Google 로그아웃</button>' : ''}</div>
     </details>
-${favHtml}${forgetHtml}${infoHtml}    </details>
+${favHtml}${dupHtml}${forgetHtml}${infoHtml}    </details>
 
     <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
   mform.innerHTML = isMobile() ? settingsMobileHtml() : `
@@ -3494,7 +3643,7 @@ ${devHtml}    </section>
 ${backupHtml}
     <h3 class="set-group">가끔 쓰는 것 <small class="muted">필요할 때만 펼치세요</small></h3>
 
-${itemsHtml}${favHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
+${itemsHtml}${favHtml}${dupHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
 
   mform.onsubmit = e => e.preventDefault();
   const modeRadios = [...mform.querySelectorAll('[name=openMode]')];
@@ -3531,6 +3680,11 @@ ${itemsHtml}${favHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><sp
     } catch (e) { toast(e.message, true); }
     await modeDone();
   };
+  mform.onchange = e => {
+    if (!e.target.matches('[data-dup]')) return;
+    const n = dupPicked().length, b = mform.querySelector('[data-m=dup-del]');
+    if (b) { b.disabled = !n; b.textContent = n ? `선택한 사본 지우기 (${n}개)` : '선택한 사본 지우기'; }
+  };
   mform.elements.favGoogle.onchange = e => {
     const on = e.target.checked;
     if (on && !askM('아이콘 못 찾은 사이트는 Google에서 받을까요?\n켜면 못 찾은 사이트 주소(도메인)만 Google에 보내져요.')) { e.target.checked = false; return; }
@@ -3553,6 +3707,9 @@ ${itemsHtml}${favHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><sp
     };
     switch (btn.dataset.m) {
       case 'close': modal.close(); break;
+      case 'dup-scan': dupRefresh(true); break;
+      case 'dup-del': guard(dupDelete); break;
+      case 'dup-undo': guard(() => dupUndo(btn.dataset.at)); break;
       case 'gt-cid': modal.close(); editGoogleCid(); if (!/^#\/?tasks/.test(location.hash)) location.hash = '#/tasks'; else render(); break;
       case 'gt-logout': if (logoutGoogle()) modal.close(); break;
       case 'exp': guard(async () => {
