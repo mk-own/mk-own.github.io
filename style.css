@@ -996,3 +996,109 @@ html, body { overscroll-behavior-y: contain; }
 .dup-none { margin: 10px 0 0; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #dup-box mark { background: #5a4a00; } }
 :root[data-theme="dark"] #dup-box mark { background: #5a4a00; }
+
+/* ===== 문서 (js/docs.js): 분류 · 목록 · 서식 편집기. 휴대폰은 목록 → 전체 화면 편집기 ===== */
+.view:has(.docs-layout) { max-width: 1360px; }
+.docs-layout { display: grid; grid-template-columns: 176px 300px minmax(0, 1fr); gap: 18px; align-items: start; }
+.doc-cats, .doc-side { position: sticky; top: 72px; max-height: calc(100vh - 96px); overflow-y: auto; min-width: 0; }
+.doc-cat-select { display: none; margin-bottom: 10px; }
+.doc-main { min-width: 0; }
+.doc-items { display: grid; gap: 4px; }
+.doc-item { display: grid; gap: 2px; min-width: 0; padding: 9px 12px; border-radius: 10px; border: 1px solid transparent; text-decoration: none; }
+.doc-item:hover { background: var(--surface-2); }
+.doc-item.on { background: var(--surface); border-color: var(--accent); box-shadow: var(--shadow); }
+.doc-item-t { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.doc-item-t b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-star { color: #d69600; flex: none; }
+.doc-item-m { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--muted); }
+.doc-tag { padding: 0 6px; border-radius: 5px; background: var(--surface-2); color: var(--text-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-snip { font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+.doc-snip mark, .doc-tb mark { background: #fde68a; color: #1a1a19; border-radius: 2px; padding: 0 1px; }
+.doc-empty { padding: 28px 12px; }
+.doc-undo { margin: 0 0 10px; }
+.doc-trash { margin-top: 14px; font-size: 13px; }
+.doc-trash summary { cursor: pointer; padding: 6px 4px; color: var(--text-2); font-weight: 600; }
+.doc-trash ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; }
+.doc-trash li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px dashed var(--line); border-radius: 8px; }
+.doc-trash li > span { min-width: 0; overflow-wrap: anywhere; }
+.doc-none { padding: 40px 28px; color: var(--text-2); background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius); }
+.doc-none p { margin: 0 0 8px; }
+
+.doc-ed { min-width: 0; background: var(--surface); border: 1px solid var(--ring); border-radius: var(--radius); box-shadow: var(--shadow); }
+.doc-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px 4px; }
+.doc-title { flex: 1; min-width: 0; padding: 6px 8px; font-size: 20px; font-weight: 700; border-color: transparent; background: transparent; }
+.doc-title:hover { border-color: var(--line); }
+.doc-pin { flex: none; font-size: 20px; color: var(--muted); }
+.doc-pin.on { color: #d69600; }
+.doc-pin:disabled, .doc-del:disabled { opacity: .4; cursor: default; }
+.doc-state { cursor: pointer; }
+.doc-state.ok { color: var(--text-2); }
+.doc-state.busy { color: var(--accent); }
+.doc-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 0 14px 10px 22px; }
+.doc-cat { width: 240px; min-height: 32px; padding: 4px 10px; font-size: 13px; }
+.doc-tools {
+  position: sticky; top: 57px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding: 6px 12px; background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+}
+.doc-tb { font: inherit; font-size: 13px; min-width: 32px; height: 30px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; white-space: nowrap; }
+.doc-tb:hover { background: var(--surface-2); border-color: var(--line); }
+.doc-block { width: auto; height: 30px; min-height: 30px; padding: 2px 6px; margin-right: 4px; font-size: 13px; }
+.doc-paper { padding: 22px 36px 28px; }
+.doc-attach { margin: 0 14px; padding: 12px 8px 14px; }
+/* 본문: MY Work 문서처럼 제목 1·2에 번호 */
+.doc-body { min-height: 360px; outline: none; font-size: 15px; line-height: 1.75; word-break: keep-all; overflow-wrap: anywhere; counter-reset: h1; }
+.doc-body:empty::before { content: attr(data-ph); color: var(--muted); }
+.doc-body > :first-child { margin-top: 0; }
+.doc-body h1 { counter-increment: h1; counter-reset: h2; margin: 26px 0 10px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 20px; color: var(--text); }
+.doc-body h1::before { content: counter(h1) ". "; color: var(--accent); }
+.doc-body h2 { counter-increment: h2; margin: 20px 0 8px; font-size: 17px; color: var(--text); }
+.doc-body h2::before { content: counter(h1) "." counter(h2) " "; color: var(--accent); }
+.doc-body h3 { margin: 16px 0 6px; font-size: 15px; color: var(--text); }
+.doc-body p { margin: 0 0 4px; }
+.doc-body ol, .doc-body ul { margin: 2px 0 8px; padding-left: 26px; }
+.doc-body li { margin: 2px 0; }
+.doc-body blockquote { margin: 8px 0; padding: 4px 14px; border-left: 3px solid var(--line); color: var(--text-2); }
+.doc-body a { color: var(--accent); }
+.doc-body hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.doc-body code, .doc-body pre { font-family: Consolas, "D2Coding", monospace; font-size: .92em; background: var(--surface-2); border-radius: 4px; }
+.doc-body code { padding: 0 4px; }
+.doc-body pre { padding: 10px 12px; white-space: pre-wrap; }
+.doc-body table { width: auto; margin: 6px 0 10px; border-collapse: collapse; }
+.doc-body th, .doc-body td { padding: 4px 8px; border: 1px solid var(--line); white-space: normal; vertical-align: top; cursor: text; }
+.doc-body tbody tr { cursor: text; }
+.doc-body tbody tr:hover { background: none; }
+.doc-body mark, .doc-body [style*="background-color"] { color: #1a1a19; }
+@media (max-width: 1100px) {
+  .docs-layout { grid-template-columns: 260px minmax(0, 1fr); }
+  .doc-cats { display: none; }
+  .doc-cat-select { display: block; }
+}
+@media (max-width: 599px) {
+  .docs-layout { grid-template-columns: 1fr; gap: 0; }
+  .doc-side { position: static; max-height: none; overflow: visible; }
+  .doc-items { gap: 8px; }
+  .doc-item { min-height: 56px; padding: 12px 14px; background: var(--surface); border-color: var(--ring); }
+  .doc-item-t b { font-size: 15px; }
+  .doc-trash li { flex-wrap: wrap; }
+  /* 전체 화면 편집기: 위·아래 메뉴를 덮는다 (‹ 로 목록) */
+  .doc-full {
+    position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; height: 100dvh;
+    padding-top: env(safe-area-inset-top); background: var(--surface); border: 0; border-radius: 0; box-shadow: none;
+  }
+  .doc-full .doc-head { padding: 4px 4px 2px; gap: 2px; }
+  .doc-full .doc-back { flex: none; width: 44px; height: 44px; font-size: 30px; line-height: 1; }
+  .doc-full .doc-pin, .doc-full .doc-del { width: 44px; height: 44px; }
+  .doc-full .doc-title { font-size: 18px; padding: 6px 6px; }
+  .doc-full .doc-meta { padding: 0 12px 8px; gap: 6px 10px; }
+  .doc-full .doc-cat { flex: 1 1 100%; width: auto; min-width: 0; min-height: 40px; font-size: 15px; }
+  .doc-full .doc-state { margin-left: auto; white-space: nowrap; font-size: 12px; }
+  .doc-full .doc-tools { position: static; flex: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 4px 8px; }
+  .doc-full .doc-tb { flex: none; min-width: 40px; height: 40px; }
+  .doc-full .doc-block { flex: none; height: 40px; min-height: 40px; }
+  .doc-full .doc-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom); }
+  .doc-full .doc-paper { padding: 14px 16px 22px; }
+  .doc-full .doc-body { min-height: 45vh; font-size: 16px; }
+  .doc-full .doc-attach { margin: 0 16px; padding: 12px 0 18px; }
+  body:has(.doc-full) { overflow: hidden; }
+  body:has(.doc-full) .tabbar { display: none; }
+}

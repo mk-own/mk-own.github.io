@@ -4,6 +4,7 @@ import { COLLECTIONS, SECTIONS, VIEWS, DAYS, num, whenText, isUS, BROKERS } from
 import * as store from './store.js';
 import { decide, applyFill, todayInputs, simulate, ma200Line, levels, TP, N } from './swing.js';
 import { initTasks, tasksHtml, tasksMount, forgetGoogleToken, refreshTasks, googleState, editGoogleCid, logoutGoogle } from './tasks.js';
+import { initDocs, docsHtml, docsPatch, docsMount, flush as docsFlush } from './docs.js';
 
 const { S } = store;
 const LS = { prefs: 'hub.prefs', legacyCache: 'hub.cache', legacyPlain: 'hub.plain', legacyGh: 'hub.github' };
@@ -529,6 +530,7 @@ function armIdle() {
 }
 
 async function lockNow() {
+  await docsFlush().catch(() => {}); // 문서에서 막 쓴 것 (0.6초 기다리는 저장)
   forgetGoogleToken();
   await store.forgetTab();
   if (S.dirty.size) await Promise.race([store.upload(), new Promise(r => setTimeout(r, 5000))]);
@@ -579,6 +581,7 @@ function render() {
   const v = $('#view');
   if (more) v.innerHTML = moreHtml();
   else if (s.id === 'tasks') { v.innerHTML = tokenBanner() + tasksHtml(); tasksMount(); }
+  else if (s.id === 'docs') { if (!docsPatch()) v.innerHTML = docsHtml(); docsMount(); }
   else if (s.id === 'links') v.innerHTML = linksHtml();
   else if (s.id === 'library') v.innerHTML = libraryHtml();
   else v.innerHTML = sectionHtml(s, tab);
@@ -3024,6 +3027,7 @@ fileInput.addEventListener('change', async e => {
     const { key, id } = ui.attachTo;
     await uploadMany(files, () => ({ key, id }));
     refreshAttach();
+    if (key === 'docs') render(); // 문서 목록의 📎 개수
     return;
   }
   if (mode === 'restore') return restoreFrom(files[0]);
@@ -3141,7 +3145,7 @@ function attachHtml(key, id) {
     ${list.length ? `<ul class="attach-list">${list.map(f => `<li>
         <button type="button" class="file-open" data-m="file" data-id="${f.id}">${fileIcon(f)} <span>${esc(f.name)}</span></button>
         <span class="muted small">${fmtSize(f.size)}</span></li>`).join('')}</ul>`
-      : '<p class="muted small">검진 결과지, 증권, 시간표 사진 등을 붙일 수 있어요. 모두 암호화돼요.</p>'}`;
+      : `<p class="muted small">${key === 'docs' ? '신분증·통장 사본 같은 파일을 붙일 수 있어요. 본문에 붙여 넣은 그림도 여기로 와요.' : '검진 결과지, 증권, 시간표 사진 등을 붙일 수 있어요.'} 모두 암호화돼요.</p>`}`;
 }
 
 function refreshAttach() {
@@ -3256,6 +3260,16 @@ document.addEventListener('paste', e => {
 });
 
 initTasks({ esc, toast, modal, mform, view });
+initDocs({
+  esc, toast, view, isMobile, render, safeUrl, filesOf,
+  attachHtml: (key, id) => attachHtml(key, id),
+  attach: id => { ui.attachTo = { key: 'docs', id }; pickFile('attach'); },
+  openFile: fid => openViewer(items('files').find(f => f.id === fid)),
+  uploadTo: async (files, id) => { await uploadMany(files, () => ({ key: 'docs', id })); ui.attachTo = { key: 'docs', id }; refreshAttach(); render(); },
+  pushTrash: b => pushTrash(b),
+  restoreTrash: at => restoreTrash(at),
+  trashList: () => trashList(),
+});
 
 // ---------- 파일 보기 ----------
 
@@ -3422,10 +3436,37 @@ function dupResultHtml() {
 }
 
 const trashList = () => (Array.isArray(S.data.sys.trash) ? S.data.sys.trash : []);
+// 되돌리기 자료 넣기: 같은 종류(중복 확인 · 문서)끼리만 최근 20묶음을 남긴다 (문서를 자주 지워도 중복 확인 자료가 밀려나지 않게)
+async function pushTrash(batch) {
+  const kind = b => b.kind || 'dup';
+  const all = [...trashList(), batch];
+  const mine = all.filter(b => kind(b) === kind(batch));
+  const drop = new Set(mine.slice(0, Math.max(0, mine.length - 20)));
+  S.data.sys.trash = all.filter(b => !drop.has(b));
+  await store.changedSys();
+}
+// 되돌리기: 그 묶음의 항목을 제자리에 다시 넣고 묶음을 지운다. 이미 있는 항목은 그대로. 되돌린 개수
+async function restoreTrash(at) {
+  const b = trashList().find(x => x.at === at);
+  if (!b) return 0;
+  const byCol = new Map();
+  for (const { col, rec } of b.items) {
+    if (!COLLECTIONS[col] || DUP_SKIP.has(col)) continue;
+    if ((items(col) || []).some(r => r.id === rec.id)) continue; // 이미 있으면 그대로
+    S.data.items[col] ||= [];
+    S.data.items[col].push(rec);
+    if (!byCol.has(col)) byCol.set(col, []);
+    byCol.get(col).push(rec);
+  }
+  for (const [col, recs] of byCol) await store.changed(col, recs);
+  S.data.sys.trash = trashList().filter(x => x !== b);
+  await store.changedSys();
+  return b.items.length;
+}
 function dupTrashHtml() {
   const t = trashList();
   if (!t.length) return '';
-  return `<div class="dup-trash sep"><p class="small">지운 사본 (되돌릴 수 있어요)</p><ul class="small">${t.slice().reverse().map(b => `<li>${esc(fmtWhen(Date.parse(b.at)))} · ${b.items.length}개 (${esc([...new Set(b.items.map(x => COLLECTIONS[x.col]?.title || x.col))].join('·'))})
+  return `<div class="dup-trash sep"><p class="small">지운 항목 (되돌릴 수 있어요)</p><ul class="small">${t.slice().reverse().map(b => `<li>${esc(fmtWhen(Date.parse(b.at)))} · ${b.items.length}개 (${esc([...new Set(b.items.map(x => COLLECTIONS[x.col]?.title || x.col))].join('·'))})
       <button type="button" class="btn small" data-m="dup-undo" data-at="${esc(b.at)}">되돌리기</button></li>`).join('')}</ul></div>`;
 }
 
@@ -3453,8 +3494,7 @@ async function dupDelete() {
   }
   if (!batch.items.length) return;
   // 되돌리기 자료를 먼저 저장한 뒤 지운다
-  S.data.sys.trash = [...trashList(), batch].slice(-20);
-  await store.changedSys();
+  await pushTrash(batch);
   for (const [col, recs] of byCol) {
     S.data.items[col] = items(col).filter(r => !recs.includes(r));
     await store.changed(col, recs);
@@ -3467,18 +3507,7 @@ async function dupUndo(at) {
   const b = trashList().find(x => x.at === at);
   if (!b) return;
   if (!askM(`${b.items.length}개를 되돌릴까요?`)) return;
-  const byCol = new Map();
-  for (const { col, rec } of b.items) {
-    if (!COLLECTIONS[col] || DUP_SKIP.has(col)) continue;
-    if ((items(col) || []).some(r => r.id === rec.id)) continue; // 이미 있으면 그대로
-    S.data.items[col] ||= [];
-    S.data.items[col].push(rec);
-    if (!byCol.has(col)) byCol.set(col, []);
-    byCol.get(col).push(rec);
-  }
-  for (const [col, recs] of byCol) await store.changed(col, recs);
-  S.data.sys.trash = trashList().filter(x => x !== b);
-  await store.changedSys();
+  await restoreTrash(at);
   toast(`${b.items.length}개를 되돌렸어요.`);
   dupRefresh();
 }
@@ -3834,7 +3863,7 @@ let pull = null, ptrBusy = false; // pull: { x0, y0, d(내려온 정도), on(아
 // 차트·입력칸·옆으로 스크롤되는 표 안에서 시작하면 안 함 (그 안의 끌기는 그대로)
 function ptrSkip(t) {
   if (scrollY > 0 || ptrBusy || !S.data || document.querySelector('dialog[open]')) return true;
-  if (t.closest?.('#chart, input, textarea, select, [contenteditable=""], [contenteditable=true]')) return true;
+  if (t.closest?.('#chart, input, textarea, select, [contenteditable=""], [contenteditable=true], .doc-full')) return true;
   for (let el = t; el && el !== document.body; el = el.parentElement) {
     if (el.scrollWidth > el.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true;
   }

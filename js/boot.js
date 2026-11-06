@@ -1,7 +1,7 @@
 // 열 때마다 화면 파일이 바뀌었는지 서버에 물어본 뒤 앱을 연다.
 // GitHub Pages는 파일을 10분 동안 브라우저에 그대로 두라고 해서, 이게 없으면 고친 화면이 늦게 보인다.
 // no-cache = 바뀌었을 때만 새로 받음 (안 바뀌었으면 짧은 확인만). 오프라인이면 갖고 있는 것으로 연다.
-const FILES = ['js/app.js', 'js/store.js', 'js/github.js', 'js/idb.js', 'js/crypto.js', 'js/schemas.js', 'js/swing.js', 'js/bookmarks.js', 'js/tasks.js'];
+const FILES = ['js/app.js', 'js/store.js', 'js/github.js', 'js/idb.js', 'js/crypto.js', 'js/schemas.js', 'js/swing.js', 'js/bookmarks.js', 'js/tasks.js', 'js/docs.js'];
 
 const css = fetch('style.css', { cache: 'no-cache' }).catch(() => null);
 await Promise.all(FILES.map(f => fetch(f, { cache: 'no-cache' }).catch(() => null)));

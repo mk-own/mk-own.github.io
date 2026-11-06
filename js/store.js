@@ -21,7 +21,7 @@ import {
   ITER, RITER, b64, unb64, newSalt, deriveKEK, importDEK, newDEK, wrapDEK, unwrapDEK,
   encryptText, decryptText, encryptBytes, decryptBytes, newRecoveryCode, normCode,
 } from './crypto.js';
-import { emptyData } from './schemas.js';
+import { emptyData, COLLECTIONS } from './schemas.js';
 
 export const DATA_REPO = 'my-data';
 const FILE_REPO_PREFIX = 'my-files-';
@@ -469,7 +469,8 @@ function assignShard(col, item) {
   let max = 0;
   for (const r of list) if (Number.isInteger(r._s) && r._s > max) max = r._s;
   const n = list.filter(r => r._s === max).length;
-  item._s = n < SHARD ? max : max + 1;
+  // 목록마다 조각 크기를 따로 정할 수 있다 (문서처럼 항목 하나가 큰 목록은 작게 → 한 글자 고쳐도 올리는 양이 적음)
+  item._s = n < (COLLECTIONS[col]?.shard || SHARD) ? max : max + 1;
   return item._s;
 }
 

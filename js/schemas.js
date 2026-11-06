@@ -243,6 +243,10 @@ export const COLLECTIONS = {
     noAttach: true,
   },
 
+  // 문서 (js/docs.js 화면). { id, title, cat(분류), html(본문), pin, created, updated(ISO) }
+  // 입력 칸(fields)이 없어서 일반 표·수정 창·중복 확인에는 안 나온다. 본문이 커서 20개씩 조각으로 저장
+  docs: { title: '문서', fields: [], cols: [], shard: 20, label: r => r.title || '제목 없음' },
+
   // 첨부 파일 정보 (화면에 표로 나오지 않음). pk/pid = 붙어 있는 목록/항목, 자료실이면 pk = 'library'
   files: { title: '파일', fields: [], cols: [], noAttach: true },
 };
@@ -252,6 +256,7 @@ export const VIEWS = { timetable: '시간표' };
 
 export const SECTIONS = [
   { id: 'tasks', title: '할 일' },
+  { id: 'docs', title: '문서' },
   { id: 'assets', title: '자산관리', tabs: ['stocks', 'pension', 'savings', 'insurance', 'realestate', 'loans'] },
   { id: 'education', title: '교육', tabs: ['education', 'timetable'] },
   { id: 'health', title: '건강', tabs: ['records', 'checkups', 'meds', 'hospitals'] },
