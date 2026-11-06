@@ -2668,12 +2668,63 @@ function folderTree() {
 
 const inFolder = (l, f) => { const p = l.folder || '미분류'; return p === f || p.startsWith(f + SEP); };
 
-// 사이트 아이콘은 외부에서 가져오지 않는다 (어떤 사이트를 즐겨찾기했는지 남에게 알리지 않으려고). 첫 글자로 표시
+// 사이트 아이콘: 그 사이트 자신에게서만 받는다 (https://<host>/favicon.ico → /apple-touch-icon.png).
+// 구글·DuckDuckGo 같은 아이콘 대행 서비스는 쓰지 않는다 (링크 목록 전체를 그 회사에 알리게 되니까).
+// 못 받으면 첫 글자 네모 그대로. 실패한 사이트는 이 탭에서 다시 시도하지 않고, 이 기기에도 (주소 대신 해시로) 기억
+const FAV_FAIL = 'hub.favFail';
+const FAV_SRC = ['/favicon.ico', '/apple-touch-icon.png'];
+const favStep = new Map(); // host → 성공한 단계 번호, 또는 -1(실패)
+const favHash = h => { let x = 0x811c9dc5; for (let i = 0; i < h.length; i++) x = Math.imul(x ^ h.charCodeAt(i), 0x01000193); return (x >>> 0).toString(36); };
+const favFailed = new Set(Array.isArray(lsGet(FAV_FAIL)) ? lsGet(FAV_FAIL) : []);
+
+// 아이콘을 시도할 호스트 (http/https, 공개 도메인만 — 사내망·IP·localhost·포트 지정 주소는 건너뜀)
+function favHost(url) {
+  let p;
+  try { p = new URL(url); } catch { return ''; }
+  if (!/^https?:$/.test(p.protocol) || p.port) return '';
+  const h = p.hostname.toLowerCase();
+  if (!h.includes('.') || h.includes(':') || h.startsWith('[')) return '';
+  if (/^\d+(\.\d+){3}$/.test(h)) return '';
+  if (/(^|\.)(localhost|local|lan|internal|intranet|corp|home|home\.arpa|test|invalid|example)$/.test(h)) return '';
+  return h;
+}
+
+function favImg(url) {
+  const h = favHost(url);
+  if (!h) return '';
+  const step = favStep.get(h) ?? (favFailed.has(favHash(h)) ? -1 : 0);
+  if (step < 0) return '';
+  return `<img class="fav-img" alt="" width="20" height="20" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-h="${esc(h)}" data-s="${step}" src="https://${esc(h)}${FAV_SRC[step]}">`;
+}
+
+function favFail(img) {
+  const h = img.dataset.h;
+  const next = Number(img.dataset.s) + 1;
+  if (next < FAV_SRC.length) { img.dataset.s = String(next); img.src = `https://${h}${FAV_SRC[next]}`; return; }
+  favStep.set(h, -1);
+  favFailed.add(favHash(h));
+  lsSet(FAV_FAIL, [...favFailed].slice(-1000));
+  img.remove();
+}
+
+// CSP가 인라인 onerror를 막으니 문서 전체에서 잡는다 (load/error는 버블링이 없어 capture 단계로)
+document.addEventListener('load', e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains('fav-img')) return;
+  if (img.naturalWidth < 8 || img.naturalHeight < 8) { favFail(img); return; } // 1×1 같은 깨진 그림
+  favStep.set(img.dataset.h, Number(img.dataset.s));
+  img.classList.add('ok');
+}, true);
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (img instanceof HTMLImageElement && img.classList.contains('fav-img')) favFail(img);
+}, true);
+
 function linkCard(l) {
   const u = safeUrl(l.url);
   const host = hostOf(l.url);
   return `<a class="link-card${ui.editLinks ? ' editing' : ''}" ${u ? `href="${esc(u)}" target="_blank" rel="noopener noreferrer"` : ''} data-act="link" data-id="${l.id}" title="${esc(l.url)}">
-      <span class="fav" data-l="${esc((l.name || host || '?').trim().charAt(0).toUpperCase())}"></span>
+      <span class="fav" data-l="${esc((l.name || host || '?').trim().charAt(0).toUpperCase())}">${favImg(l.url)}</span>
       <span class="link-text"><span class="link-name">${esc(l.name)}</span><span class="link-host">${esc(host || l.url)}</span></span>
       ${l.pin ? '<span class="pin" aria-label="고정됨">★</span>' : ''}
     </a>`;
