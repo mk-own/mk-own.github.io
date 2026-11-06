@@ -2668,14 +2668,25 @@ function folderTree() {
 
 const inFolder = (l, f) => { const p = l.folder || '미분류'; return p === f || p.startsWith(f + SEP); };
 
-// 사이트 아이콘: 그 사이트 자신에게서만 받는다 (https://<host>/favicon.ico → /apple-touch-icon.png).
-// 구글·DuckDuckGo 같은 아이콘 대행 서비스는 쓰지 않는다 (링크 목록 전체를 그 회사에 알리게 되니까).
+// 사이트 아이콘: 기본은 그 사이트 자신에게서만 받는다 (favicon.ico → apple-touch-icon.png → favicon.png → favicon.svg
+// → favicon-32x32.png → www가 붙은/빠진 주소의 favicon.ico·apple-touch-icon.png). 앞 것이 실패할 때만 다음 것을 부른다.
+// 구글 같은 아이콘 대행 서비스는 설정에서 켰을 때만, 위를 다 실패한 사이트에만 쓴다 (켜면 그 도메인만 Google에 보내짐).
+// 링크마다 직접 넣은 아이콘(l.icon, 32×32 PNG data: 주소 — 암호화된 데이터 안)이 있으면 그게 먼저.
 // 못 받으면 첫 글자 네모 그대로. 실패한 사이트는 이 탭에서 다시 시도하지 않고, 이 기기에도 (주소 대신 해시로) 기억
-const FAV_FAIL = 'hub.favFail';
-const FAV_SRC = ['/favicon.ico', '/apple-touch-icon.png'];
-const favStep = new Map(); // host → 성공한 단계 번호, 또는 -1(실패)
+const FAV_FAIL = 'hub.favFail2'; // 키를 바꿔서 974e4aa 때 실패한 사이트도 새 순서로 한 번 더 시도 (예전 키는 지움 — 기기 캐시일 뿐)
+lsSet('hub.favFail', null);
+const FAV_PATHS = ['/favicon.ico', '/apple-touch-icon.png', '/favicon.png', '/favicon.svg', '/favicon-32x32.png'];
+const favStep = new Map(); // host → 성공한 단계 (번호, 또는 'g' = Google)
+const favGFail = new Set(); // Google에서도 못 받은 host (이 탭에서만)
 const favHash = h => { let x = 0x811c9dc5; for (let i = 0; i < h.length; i++) x = Math.imul(x ^ h.charCodeAt(i), 0x01000193); return (x >>> 0).toString(36); };
 const favFailed = new Set(Array.isArray(lsGet(FAV_FAIL)) ? lsGet(FAV_FAIL) : []);
+const favGoogleOn = () => !!lsGet(LS.prefs)?.favGoogle;
+const favG = h => `https://www.google.com/s2/favicons?domain=${encodeURIComponent(h)}&sz=64`;
+// www.notion.so ↔ notion.so (www.이 붙어 있으면 뺀 것, 없고 짧은 도메인이면 붙인 것)
+const favAlt = h => { if (h.startsWith('www.')) return h.slice(4); const p = h.split('.'); return p.length === 2 || (p.length === 3 && /^(co|com|or|ne|go|ac|net|org)$/.test(p[1])) ? 'www.' + h : ''; };
+const favChain = h => { const a = favAlt(h); return [...FAV_PATHS.map(p => `https://${h}${p}`), ...(a ? FAV_PATHS.slice(0, 2).map(p => `https://${a}${p}`) : [])]; };
+// 직접 넣은 아이콘: 우리가 만든 작은 PNG data: 주소만 받는다
+const isIcon = v => typeof v === 'string' && v.length <= 12000 && /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(v);
 
 // 아이콘을 시도할 호스트 (http/https, 공개 도메인만 — 사내망·IP·localhost·포트 지정 주소는 건너뜀)
 function favHost(url) {
@@ -2689,21 +2700,28 @@ function favHost(url) {
   return h;
 }
 
-function favImg(url) {
-  const h = favHost(url);
+// l = 링크 ({ url, icon? }). 직접 넣은 아이콘 → 이 탭에서 성공한 주소 → 처음부터 차례로 (실패 기억이 있으면 Google 또는 글자)
+function favImg(l) {
+  if (isIcon(l.icon)) return `<img class="fav-cus ok" alt="" width="20" height="20" decoding="async" src="${l.icon}">`;
+  const h = favHost(l.url);
   if (!h) return '';
-  const step = favStep.get(h) ?? (favFailed.has(favHash(h)) ? -1 : 0);
-  if (step < 0) return '';
-  return `<img class="fav-img" alt="" width="20" height="20" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-h="${esc(h)}" data-s="${step}" src="https://${esc(h)}${FAV_SRC[step]}">`;
+  let s = favStep.get(h);
+  if (s === undefined) s = !favFailed.has(favHash(h)) ? 0 : favGoogleOn() && !favGFail.has(h) ? 'g' : -1;
+  if (s === -1 || (s === 'g' && !favGoogleOn())) return ''; // Google 받기를 끄면 Google에서 받은 것도 안 씀
+  const src = s === 'g' ? favG(h) : favChain(h)[s];
+  return `<img class="fav-img" alt="" width="20" height="20" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-h="${esc(h)}" data-s="${s}" src="${esc(src)}">`;
 }
 
 function favFail(img) {
-  const h = img.dataset.h;
-  const next = Number(img.dataset.s) + 1;
-  if (next < FAV_SRC.length) { img.dataset.s = String(next); img.src = `https://${h}${FAV_SRC[next]}`; return; }
-  favStep.set(h, -1);
-  favFailed.add(favHash(h));
-  lsSet(FAV_FAIL, [...favFailed].slice(-1000));
+  const h = img.dataset.h, s = img.dataset.s;
+  favStep.delete(h);
+  if (s !== 'g') {
+    const chain = favChain(h), next = Number(s) + 1;
+    if (next < chain.length) { img.dataset.s = String(next); img.src = chain[next]; return; }
+    favFailed.add(favHash(h));
+    lsSet(FAV_FAIL, [...favFailed].slice(-1000));
+    if (favGoogleOn() && !favGFail.has(h)) { img.dataset.s = 'g'; img.src = favG(h); return; }
+  } else favGFail.add(h);
   img.remove();
 }
 
@@ -2711,24 +2729,58 @@ function favFail(img) {
 document.addEventListener('load', e => {
   const img = e.target;
   if (!(img instanceof HTMLImageElement) || !img.classList.contains('fav-img')) return;
-  if (img.naturalWidth < 8 || img.naturalHeight < 8) { favFail(img); return; } // 1×1 같은 깨진 그림
-  favStep.set(img.dataset.h, Number(img.dataset.s));
+  const w = img.naturalWidth, ht = img.naturalHeight;
+  // 1×1 같은 깨진 그림은 실패로 (크기 없는 SVG는 0×0일 수 있어서 svg만 봐줌)
+  if ((w > 0 && w < 8) || (ht > 0 && ht < 8) || (!w && !ht && !img.src.endsWith('.svg'))) { favFail(img); return; }
+  favStep.set(img.dataset.h, img.dataset.s === 'g' ? 'g' : Number(img.dataset.s));
   img.classList.add('ok');
 }, true);
 document.addEventListener('error', e => {
   const img = e.target;
-  if (img instanceof HTMLImageElement && img.classList.contains('fav-img')) favFail(img);
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.classList.contains('fav-img')) favFail(img);
+  else if (img.classList.contains('fav-cus')) img.remove();
 }, true);
+
+// 붙여 넣거나 고른 그림 → 32×32 PNG data: 주소 (너무 크면 24·16으로 줄임, 약 2KB 안쪽)
+async function iconFromBlob(blob) {
+  if (!blob || !/^image\//.test(blob.type)) throw new Error('그림 파일이 아니에요.');
+  if (blob.size > 20e6) throw new Error('그림이 너무 커요.');
+  const url = URL.createObjectURL(blob);
+  try {
+    const im = new Image();
+    im.src = url;
+    await im.decode();
+    const iw = im.naturalWidth || 32, ih = im.naturalHeight || 32;
+    let out = '';
+    for (const n of [32, 24, 16]) {
+      const c = document.createElement('canvas');
+      c.width = c.height = n;
+      const k = Math.min(n / iw, n / ih), w = iw * k, h = ih * k;
+      const g = c.getContext('2d');
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(im, (n - w) / 2, (n - h) / 2, w, h);
+      out = c.toDataURL('image/png');
+      if (out.length <= 2800) break;
+    }
+    if (!isIcon(out)) throw new Error('그림을 아이콘으로 바꾸지 못했어요.');
+    return out;
+  } catch (e) {
+    throw e.name === 'EncodingError' ? new Error('이 그림은 읽을 수 없어요.') : e;
+  } finally { URL.revokeObjectURL(url); }
+}
 
 function linkCard(l) {
   const u = safeUrl(l.url);
   const host = hostOf(l.url);
   return `<a class="link-card${ui.editLinks ? ' editing' : ''}" ${u ? `href="${esc(u)}" target="_blank" rel="noopener noreferrer"` : ''} data-act="link" data-id="${l.id}" title="${esc(l.url)}">
-      <span class="fav" data-l="${esc((l.name || host || '?').trim().charAt(0).toUpperCase())}">${favImg(l.url)}</span>
+      <span class="fav" data-l="${esc(favLetter(l))}">${favImg(l)}</span>
       <span class="link-text"><span class="link-name">${esc(l.name)}</span><span class="link-host">${esc(host || l.url)}</span></span>
       ${l.pin ? '<span class="pin" aria-label="고정됨">★</span>' : ''}
     </a>`;
 }
+
+const favLetter = l => (l.name || hostOf(l.url) || '?').trim().charAt(0).toUpperCase() || '?';
 
 function linkGridHtml() {
   let list = items('links');
@@ -3108,21 +3160,29 @@ function openEditor(key, id, preset = {}) {
       : '<p class="muted small wide">저장한 뒤 파일을 첨부할 수 있어요.</p>';
   mform.innerHTML = `
     <h2>${def.title} ${rec ? '수정' : '추가'}</h2>
-    <div class="fields">${def.fields.map(f => fieldHtml(f, v[f.k])).join('')}${attach}</div>
+    <div class="fields">${def.fields.map(f => fieldHtml(f, v[f.k])).join('')}${key === 'links' ? iconRowHtml() : ''}${attach}</div>
     <div class="modal-actions">
       ${rec ? '<button type="button" class="btn danger" data-m="del">삭제</button>' : ''}
       <span class="spacer"></span>
       <button type="button" class="btn" data-m="close">취소</button>
       <button type="submit" class="btn primary">저장</button>
     </div>`;
+  // 링크 아이콘: undefined = 안 건드림, '' = 기본으로(칸 지움), 'data:…' = 새 아이콘. 다른 칸은 그대로
+  ui.iconEdit = key === 'links' ? { val: undefined, cur: isIcon(v.icon) ? v.icon : '' } : null;
   mform.onsubmit = async e => {
     e.preventDefault();
     const out = readForm(def);
+    const icon = ui.iconEdit?.val;
+    ui.iconEdit = null;
+    if (icon) out.icon = icon;
     let target = rec;
     const before = rec && key === 'stocks' ? { qty: num(rec.qty), avg: num(rec.avg), units: num(rec.units) } : null;
-    if (rec) Object.assign(rec, out);
-    if (before) rebaseHoldings(rec, before);
-    else { target = { id: uid(), ...out }; items(key).push(target); }
+    // 고치기는 그 항목만 바꾼다 (77a2466부터 주식이 아닌 항목을 고치면 사본이 하나 더 생기던 것을 바로잡음)
+    if (rec) {
+      Object.assign(rec, out);
+      if (before) rebaseHoldings(rec, before);
+      if (icon === '') delete rec.icon;
+    } else { target = { id: uid(), ...out }; items(key).push(target); }
     await store.changed(key, [target]);
     modal.close();
     render();
@@ -3133,6 +3193,8 @@ function openEditor(key, id, preset = {}) {
     const m = btn.dataset.m;
     if (m === 'close') modal.close();
     if (m === 'attach') pickFile('attach');
+    if (m === 'icon-pick') $('#icon-file').click();
+    if (m === 'icon-reset' && ui.iconEdit) { ui.iconEdit.val = ''; ui.iconEdit.cur = ''; iconPreview(); }
     if (m === 'file') openViewer(items('files').find(f => f.id === btn.dataset.id));
     if (m === 'del') {
       const att = filesOf(key, rec.id);
@@ -3144,9 +3206,54 @@ function openEditor(key, id, preset = {}) {
       render();
     }
   };
+  if (ui.iconEdit) {
+    iconPreview();
+    mform.elements.url.addEventListener('change', iconPreview);
+    $('#icon-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) setIcon(f); };
+  }
   modal.showModal();
   mform.querySelector('input:not([type=checkbox]), select, textarea')?.focus();
 }
+
+// 링크 수정 창의 아이콘 줄: 지금 아이콘 + 그림 붙여넣기/고르기 + 기본으로
+function iconRowHtml() {
+  return `<div class="field wide icon-row"><span>아이콘</span>
+      <div class="icon-line"><span class="fav" id="icon-prev" data-l="?"></span>
+        <button type="button" class="btn small" data-m="icon-pick">그림 붙여넣기/고르기</button>
+        <button type="button" class="btn small" data-m="icon-reset">기본으로</button>
+        <input type="file" id="icon-file" accept="image/*" hidden></div>
+      <small class="muted" id="icon-note"></small>
+    </div>`;
+}
+
+function iconPreview() {
+  const box = $('#icon-prev');
+  if (!box || !ui.iconEdit) return;
+  const l = { name: mform.elements.name?.value, url: mform.elements.url?.value.trim(), icon: ui.iconEdit.val ?? ui.iconEdit.cur };
+  box.dataset.l = favLetter(l);
+  box.innerHTML = favImg(l);
+  const note = $('#icon-note');
+  if (note) note.textContent = isIcon(l.icon) ? (ui.iconEdit.val ? '새 아이콘 — 저장을 눌러야 바뀌어요.' : '직접 넣은 아이콘이에요. 기본으로를 누르면 사이트 아이콘으로 돌아가요.')
+    : ui.iconEdit.val === '' ? '기본 아이콘으로 — 저장을 눌러야 바뀌어요.' : (isMobile() ? '사진·그림을 고르면' : '그림을 복사해 이 창에서 Ctrl+V 해도 돼요.') + ' 32×32로 줄여 암호화해 저장해요.';
+}
+
+async function setIcon(blob) {
+  try {
+    const d = await iconFromBlob(blob);
+    if (!ui.iconEdit) return;
+    ui.iconEdit.val = d;
+    iconPreview();
+  } catch (e) { toast(e.message, true); }
+}
+
+// 링크 수정 창이 열려 있을 때 Ctrl+V 한 그림 → 아이콘 (글자 붙여넣기는 그대로)
+document.addEventListener('paste', e => {
+  if (!ui.iconEdit || !modal.open || !$('#icon-prev')) return;
+  const f = [...(e.clipboardData?.files || [])].find(x => x.type.startsWith('image/'));
+  if (!f) return;
+  e.preventDefault();
+  setIcon(f);
+});
 
 initTasks({ esc, toast, modal, mform, view });
 
@@ -3315,6 +3422,14 @@ function openSettings() {
     </details>
 
 `;
+  const favHtml = `    <details class="set-item">
+      <summary><b>링크 아이콘</b><span>사이트에서 아이콘을 못 찾았을 때</span></summary>
+      <p class="muted small">기본은 각 사이트에서만 아이콘을 받아요. 못 찾은 사이트는 첫 글자로 보이고, 링크 수정 창에서 그림을 직접 넣을 수도 있어요.</p>
+      <label class="check"><input type="checkbox" name="favGoogle"${prefs.favGoogle ? ' checked' : ''}> <span>아이콘 못 찾은 사이트는 Google에서 받기</span></label>
+      <p class="muted small">켜면 못 찾은 사이트 주소(도메인)만 Google에 보내져요. 이 기기에서만 적용돼요.</p>
+    </details>
+
+`;
   const forgetHtml = `    <details class="set-item">
       <summary><b>이 기기 연결 끊기</b><span>이 기기를 더 안 쓰거나, 다른 계정으로 연결할 때</span></summary>
       <p class="muted small">이 기기에서만 연결을 끊어요. <b>GitHub의 데이터는 지워지지 않고</b>, 토큰이나 QR로 다시 연결하면 그대로 돌아와요. 아직 못 올린 변경이 있으면 끊지 않아요.</p>
@@ -3358,7 +3473,7 @@ ${itemsHtml}    <details class="set-item">
       <p class="muted small">할 일 화면이 Google에 로그인하는 설정이에요. 지우거나 로그아웃해도 Google 할 일 내용은 그대로예요.</p>
       <div class="row"><button type="button" class="btn" data-m="gt-cid">${gs.clientId ? '클라이언트 ID 바꾸기·지우기' : '클라이언트 ID 넣기'}</button>${gs.loggedIn ? '<button type="button" class="btn" data-m="gt-logout">Google 로그아웃</button>' : ''}</div>
     </details>
-${forgetHtml}${infoHtml}    </details>
+${favHtml}${forgetHtml}${infoHtml}    </details>
 
     <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
   mform.innerHTML = isMobile() ? settingsMobileHtml() : `
@@ -3379,7 +3494,7 @@ ${devHtml}    </section>
 ${backupHtml}
     <h3 class="set-group">가끔 쓰는 것 <small class="muted">필요할 때만 펼치세요</small></h3>
 
-${itemsHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
+${itemsHtml}${favHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><span class="spacer"></span><button type="button" class="btn primary" data-m="close">닫기</button></div>`;
 
   mform.onsubmit = e => e.preventDefault();
   const modeRadios = [...mform.querySelectorAll('[name=openMode]')];
@@ -3415,6 +3530,14 @@ ${itemsHtml}${forgetHtml}${infoHtml}    <div class="modal-actions"><span class="
       }
     } catch (e) { toast(e.message, true); }
     await modeDone();
+  };
+  mform.elements.favGoogle.onchange = e => {
+    const on = e.target.checked;
+    if (on && !askM('아이콘 못 찾은 사이트는 Google에서 받을까요?\n켜면 못 찾은 사이트 주소(도메인)만 Google에 보내져요.')) { e.target.checked = false; return; }
+    lsSet(LS.prefs, { ...(lsGet(LS.prefs) || {}), favGoogle: on });
+    const g = $('#link-grid');
+    if (g) g.innerHTML = linkGridHtml();
+    toast(on ? '못 찾은 사이트 아이콘은 Google에서 받아요.' : '이제 각 사이트에서만 아이콘을 받아요.');
   };
   mform.elements.lockMin.onchange = e => {
     lsSet(LS.prefs, { ...(lsGet(LS.prefs) || {}), lockMin: Math.max(1, Number(e.target.value) || 10) });

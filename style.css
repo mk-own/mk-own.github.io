@@ -975,3 +975,7 @@ html, body { overscroll-behavior-y: contain; }
 /* 어두운 테마: 카드 띠 글자는 어둡게 (밝은 상태색 위) */
 @media (max-width: 599px) and (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .m-slot[data-state] .m-band { color: #101214; } }
 @media (max-width: 599px) { :root[data-theme="dark"] .m-slot[data-state] .m-band { color: #101214; } }
+
+/* 링크 수정 창: 아이콘 줄 */
+.icon-row .icon-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.icon-row small { display: block; margin-top: 4px; }
